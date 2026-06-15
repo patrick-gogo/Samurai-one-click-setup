@@ -38,6 +38,42 @@ function Format-DockerLine($c) {
     '{0,-16} {1}' -f $c.Service, $c.Status
 }
 
+function Get-CiState($rollup) {
+    if (-not $rollup -or @($rollup).Count -eq 0) { return 'none' }
+    $states = foreach ($c in @($rollup)) {
+        if ($c.conclusion) { $c.conclusion } elseif ($c.state) { $c.state } else { $c.status }
+    }
+    if ($states -contains 'FAILURE' -or $states -contains 'ERROR') { return 'x' }
+    if ($states -contains 'PENDING' -or $states -contains 'IN_PROGRESS' -or $states -contains 'QUEUED') { return '~' }
+    return 'ok'
+}
+
+function ConvertFrom-GhPr($prs) {
+    foreach ($p in @($prs)) {
+        if ($null -eq $p) { continue }   # gh '[]' parses to $null in pwsh; @($null) iterates once
+        [pscustomobject]@{
+            Number = $p.number; Title = $p.title; Ci = Get-CiState $p.statusCheckRollup
+            Draft = [bool]$p.isDraft; Mergeable = $p.mergeable
+        }
+    }
+}
+
+function Format-PrLine($pr) {
+    $ci = switch ($pr.Ci) { 'ok' {'CI ok'} 'x' {'CI X '} '~' {'CI ~ '} default {'CI -  '} }
+    $st = if ($pr.Draft) { 'draft' } else { 'ready' }
+    $mg = if ($pr.Mergeable -eq 'CONFLICTING') { 'conflicts' } else { 'mergeable' }
+    $title = if ($pr.Title.Length -gt 40) { $pr.Title.Substring(0, 37) + '...' } else { $pr.Title }
+    '#{0,-4} {1,-40} {2} . {3} . {4}' -f $pr.Number, $title, $ci, $st, $mg
+}
+
+function Get-PrInfo([string]$Repo, [string]$Mode) {
+    $a = @('pr','list','--repo',$Repo,'--json','number,title,isDraft,mergeable,statusCheckRollup','--limit','15')
+    if ($Mode -eq 'mine') { $a += @('--author','@me') } else { $a += @('--search','review-requested:@me') }
+    $json = gh @a 2>$null
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) { return 'UNAVAILABLE' }   # gh failed/offline
+    ConvertFrom-GhPr (ConvertFrom-Json $json)   # emits 0..N pr objects (nothing when the list is [])
+}
+
 function Invoke-Dashboard {
     while ($true) {
         Clear-Host
@@ -62,6 +98,23 @@ function Invoke-Dashboard {
                 }
             }
         } catch { Write-Host "  docker error: $($_.Exception.Message)" -ForegroundColor Red }
+        Write-Host '  == Pull Requests ==' -ForegroundColor Cyan
+        Write-Host '  fetching...' -ForegroundColor DarkGray
+        foreach ($repo in @('f-i-d/samurai_cart_v3', 'f-i-d/samurai_cart_v3_frontend')) {
+            $short = $repo.Split('/')[-1] -replace '^samurai_cart_v3', 'cart'
+            foreach ($mode in @('review', 'mine')) {
+                try {
+                    $prs = Get-PrInfo $repo $mode
+                    if ($prs -is [string]) { Write-Host "  [$short/$mode] gh unavailable" -ForegroundColor Red }
+                    elseif ($prs) {
+                        foreach ($pr in @($prs)) {
+                            $col = switch ($pr.Ci) { 'x' {'Red'} '~' {'Yellow'} default {'Gray'} }
+                            Write-Host ("  [$short/$mode] " + (Format-PrLine $pr)) -ForegroundColor $col
+                        }
+                    }
+                } catch { Write-Host "  [$short/$mode] error" -ForegroundColor Red }
+            }
+        }
         Write-Host ''
         Write-Host '  [r] refresh   [q] quit' -ForegroundColor DarkGray
         $k = [Console]::ReadKey($true)

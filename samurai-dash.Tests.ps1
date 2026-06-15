@@ -25,6 +25,23 @@ Assert 'repo: n/a'              { (Format-RepoLine ([pscustomobject]@{Name='x';O
 # --- Format-DockerLine ---
 Assert 'docker: line format'    { (Format-DockerLine ([pscustomobject]@{Service='api';State='running';Status='Up 2 hours (healthy)'})) -match '^api\s+Up 2 hours \(healthy\)$' }
 
+# --- Get-CiState ---
+Assert 'ci: no checks'          { (Get-CiState @()) -eq 'none' }
+Assert 'ci: all success'        { (Get-CiState @([pscustomobject]@{conclusion='SUCCESS'}, [pscustomobject]@{conclusion='SUCCESS'})) -eq 'ok' }
+Assert 'ci: one failure'        { (Get-CiState @([pscustomobject]@{conclusion='SUCCESS'}, [pscustomobject]@{conclusion='FAILURE'})) -eq 'x' }
+Assert 'ci: pending'            { (Get-CiState @([pscustomobject]@{conclusion='SUCCESS'}, [pscustomobject]@{status='IN_PROGRESS'})) -eq '~' }
+Assert 'ci: statusContext'      { (Get-CiState @([pscustomobject]@{state='SUCCESS'})) -eq 'ok' }
+
+# --- Format-PrLine ---
+Assert 'pr: number'             { (Format-PrLine ([pscustomobject]@{Number=169;Title='feat: legal pages';Ci='ok';Draft=$false;Mergeable='MERGEABLE'})) -match '^#169 ' }
+Assert 'pr: ci ok'              { (Format-PrLine ([pscustomobject]@{Number=169;Title='feat: legal pages';Ci='ok';Draft=$false;Mergeable='MERGEABLE'})) -match 'CI ok' }
+Assert 'pr: ready'              { (Format-PrLine ([pscustomobject]@{Number=169;Title='feat';Ci='ok';Draft=$false;Mergeable='MERGEABLE'})) -match 'ready' }
+Assert 'pr: draft+conflicts'    { (Format-PrLine ([pscustomobject]@{Number=1;Title='x';Ci='x';Draft=$true;Mergeable='CONFLICTING'})) -match 'draft . conflicts' }
+
+# --- ConvertFrom-GhPr null/empty (gh '[]' parses to $null in pwsh; must NOT yield a blank PR) ---
+Assert 'pr: null input -> 0 rows'  { @(ConvertFrom-GhPr $null).Count -eq 0 }
+Assert 'pr: empty input -> 0 rows' { @(ConvertFrom-GhPr @()).Count -eq 0 }
+
 Write-Host ''
 if ($script:ran -eq 0) { Write-Host 'NO TESTS RAN' -ForegroundColor Red; exit 1 }
 if ($script:fails) { Write-Host "$($script:fails)/$($script:ran) FAILED" -ForegroundColor Red; exit 1 } else { Write-Host "ALL $($script:ran) PASS" -ForegroundColor Green }
