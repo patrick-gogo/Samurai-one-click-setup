@@ -22,6 +22,9 @@ Assert 'repo: dirty+unpushed'   { (Format-RepoLine ([pscustomobject]@{Name='stor
 Assert 'repo: behind'           { (Format-RepoLine ([pscustomobject]@{Name='admin';Branch='m';Dirty=0;Unpushed=0;Behind=3;Ok=$true})) -match '\(clean\)  \[behind 3\]' }
 Assert 'repo: n/a'              { (Format-RepoLine ([pscustomobject]@{Name='x';Ok=$false})) -match '^x\s+n/a$' }
 
+# --- Format-DockerLine ---
+Assert 'docker: line format'    { (Format-DockerLine ([pscustomobject]@{Service='api';State='running';Status='Up 2 hours (healthy)'})) -match '^api\s+Up 2 hours \(healthy\)$' }
+
 Write-Host ''
 if ($script:ran -eq 0) { Write-Host 'NO TESTS RAN' -ForegroundColor Red; exit 1 }
 if ($script:fails) { Write-Host "$($script:fails)/$($script:ran) FAILED" -ForegroundColor Red; exit 1 } else { Write-Host "ALL $($script:ran) PASS" -ForegroundColor Green }

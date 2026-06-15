@@ -23,6 +23,21 @@ function Format-RepoLine($i) {
     '{0,-7} {1}  ({2}){3}' -f $i.Name, $i.Branch, ($bits -join ', '), $behind
 }
 
+function Get-DockerInfo {
+    $raw = docker compose -f "$script:Admin\docker-compose.yml" ps --format json 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $raw) { return $null }   # engine down / compose missing
+    $text = ($raw -join "`n").Trim()
+    if ($text.StartsWith('[')) { $objs = $text | ConvertFrom-Json }
+    else { $objs = $text -split "`n" | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json } }
+    foreach ($o in @($objs)) {
+        [pscustomobject]@{ Service = $o.Service; State = $o.State; Status = $o.Status }
+    }
+}
+
+function Format-DockerLine($c) {
+    '{0,-16} {1}' -f $c.Service, $c.Status
+}
+
 function Invoke-Dashboard {
     while ($true) {
         Clear-Host
@@ -34,6 +49,19 @@ function Invoke-Dashboard {
             $color = if (-not $r.Ok) { 'Red' } elseif ($r.Dirty -or $r.Unpushed) { 'Yellow' } else { 'Green' }
             Write-Host ('  ' + (Format-RepoLine $r)) -ForegroundColor $color
         }
+        Write-Host '  == Docker ==' -ForegroundColor Cyan
+        try {
+            $dock = Get-DockerInfo
+            if ($null -eq $dock) { Write-Host '  engine down' -ForegroundColor Red }
+            else {
+                $up = @($dock | Where-Object { $_.State -eq 'running' }).Count
+                Write-Host ("  ($up/$(@($dock).Count) up)") -ForegroundColor DarkGray
+                foreach ($c in $dock) {
+                    $col = if ($c.State -eq 'running') { 'Green' } else { 'Red' }
+                    Write-Host ('  ' + (Format-DockerLine $c)) -ForegroundColor $col
+                }
+            }
+        } catch { Write-Host "  docker error: $($_.Exception.Message)" -ForegroundColor Red }
         Write-Host ''
         Write-Host '  [r] refresh   [q] quit' -ForegroundColor DarkGray
         $k = [Console]::ReadKey($true)
