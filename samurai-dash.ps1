@@ -1,10 +1,11 @@
 # samurai-dash.ps1 — Samurai command-center dashboard (keypress-refresh TUI).
-# Watch-only: 'r' re-renders, 'q' quits. ASCII-only output. Dot-source with -NoRun for tests.
+# Watch-only board + a command bar of actions. ASCII-only output. Dot-source with -NoRun for tests.
 param([switch]$NoRun)
 
 $script:Admin = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
 $script:Store = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3_frontend'
 
+# ---------- Repos ----------
 function Get-RepoInfo([string]$Name, [string]$Repo) {
     $branch = (git -C $Repo rev-parse --abbrev-ref HEAD 2>$null)
     if (-not $branch) { return [pscustomobject]@{ Name = $Name; Ok = $false } }
@@ -23,6 +24,7 @@ function Format-RepoLine($i) {
     '{0,-7} {1}  ({2}){3}' -f $i.Name, $i.Branch, ($bits -join ', '), $behind
 }
 
+# ---------- Docker ----------
 function Get-DockerInfo {
     $raw = docker compose -f "$script:Admin\docker-compose.yml" ps --format json 2>$null
     if ($LASTEXITCODE -ne 0 -or -not $raw) { return $null }   # engine down / compose missing
@@ -38,45 +40,32 @@ function Format-DockerLine($c) {
     '{0,-16} {1}' -f $c.Service, $c.Status
 }
 
-function Get-CiState($rollup) {
-    if (-not $rollup -or @($rollup).Count -eq 0) { return 'none' }
-    $states = foreach ($c in @($rollup)) {
-        if ($c.conclusion) { $c.conclusion } elseif ($c.state) { $c.state } else { $c.status }
+# ---------- Health (actual HTTP reachability — the npm FEs aren't in Docker) ----------
+function Test-Url([string]$Url) {
+    try { return ((Invoke-WebRequest $Url -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop).StatusCode -lt 500) }
+    catch { return $false }
+}
+
+function Get-ServiceHealth {
+    @(
+        [pscustomobject]@{ Name = 'admin FE';  Url = 'http://localhost:3000';      Up = (Test-Url 'http://localhost:3000') }
+        [pscustomobject]@{ Name = 'store FE';  Url = 'http://localhost:3001';      Up = (Test-Url 'http://localhost:3001') }
+        [pscustomobject]@{ Name = 'admin API'; Url = 'http://localhost:8000/docs'; Up = (Test-Url 'http://localhost:8000/docs') }
+    )
+}
+
+function Format-HealthLine($s) {
+    '{0,-10} {1,-28} {2}' -f $s.Name, $s.Url, $(if ($s.Up) { 'up' } else { 'down' })
+}
+
+# ---------- action helpers ----------
+function Resolve-Repo([string]$Key) {
+    # 'a' (or default) -> admin, 's' -> store. Returns its path + GitHub slug + short name.
+    if ($Key -match '^[Ss]') {
+        [pscustomobject]@{ Path = $script:Store; Slug = 'samurai_cart_v3_frontend'; Name = 'store' }
+    } else {
+        [pscustomobject]@{ Path = $script:Admin; Slug = 'samurai_cart_v3'; Name = 'admin' }
     }
-    if ($states -contains 'FAILURE' -or $states -contains 'ERROR') { return 'x' }
-    if ($states -contains 'PENDING' -or $states -contains 'IN_PROGRESS' -or $states -contains 'QUEUED') { return '~' }
-    return 'ok'
-}
-
-function ConvertFrom-GhPr($prs) {
-    foreach ($p in @($prs)) {
-        if ($null -eq $p) { continue }   # gh '[]' parses to $null in pwsh; @($null) iterates once
-        [pscustomobject]@{
-            Number = $p.number; Title = $p.title; Ci = Get-CiState $p.statusCheckRollup
-            Draft = [bool]$p.isDraft; Mergeable = $p.mergeable; Url = $p.url
-        }
-    }
-}
-
-function Format-PrLine($pr) {
-    $ci = switch ($pr.Ci) { 'ok' {'CI ok'} 'x' {'CI X '} '~' {'CI ~ '} default {'CI -  '} }
-    $st = if ($pr.Draft) { 'draft' } else { 'ready' }
-    $mg = if ($pr.Mergeable -eq 'CONFLICTING') { 'conflicts' } else { 'mergeable' }
-    $title = if ($pr.Title.Length -gt 40) { $pr.Title.Substring(0, 37) + '...' } else { $pr.Title }
-    '#{0,-4} {1,-40} {2} . {3} . {4}' -f $pr.Number, $title, $ci, $st, $mg
-}
-
-function Get-PrInfo([string]$Repo, [string]$Mode) {
-    $a = @('pr','list','--repo',$Repo,'--json','number,title,isDraft,mergeable,statusCheckRollup,url','--limit','15')
-    if ($Mode -eq 'mine') { $a += @('--author','@me') } else { $a += @('--search','review-requested:@me') }
-    $json = gh @a 2>$null
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) { return 'UNAVAILABLE' }   # gh failed/offline
-    ConvertFrom-GhPr (ConvertFrom-Json $json)   # emits 0..N pr objects (nothing when the list is [])
-}
-
-function Resolve-PrUrl($prs, $number) {
-    foreach ($p in @($prs)) { if ([string]$p.Number -eq [string]$number) { return $p.Url } }
-    return $null
 }
 
 function Parse-DockerCmd($text) {
@@ -98,17 +87,20 @@ function Open-ClaudeSession([string]$Repo) {
     wt -w samurai new-tab --title "claude ($name)" --suppressApplicationTitle -d $Repo pwsh -NoExit -Command claude
 }
 
+# ---------- main loop ----------
 function Invoke-Dashboard {
     while ($true) {
         Clear-Host
         Write-Host ''
         Write-Host '  +=================== SAMURAI COMMAND CENTER ===================+' -ForegroundColor DarkCyan
         Write-Host ('    refreshed ' + (Get-Date).ToString('ddd HH:mm:ss')) -ForegroundColor DarkGray
+
         Write-Host '  == Repos ==' -ForegroundColor Cyan
         foreach ($r in @((Get-RepoInfo 'admin' $script:Admin), (Get-RepoInfo 'store' $script:Store))) {
             $color = if (-not $r.Ok) { 'Red' } elseif ($r.Dirty -or $r.Unpushed) { 'Yellow' } else { 'Green' }
             Write-Host ('  ' + (Format-RepoLine $r)) -ForegroundColor $color
         }
+
         Write-Host '  == Docker ==' -ForegroundColor Cyan
         try {
             $dock = Get-DockerInfo
@@ -122,25 +114,14 @@ function Invoke-Dashboard {
                 }
             }
         } catch { Write-Host "  docker error: $($_.Exception.Message)" -ForegroundColor Red }
-        Write-Host '  == Pull Requests ==' -ForegroundColor Cyan
-        Write-Host '  fetching...' -ForegroundColor DarkGray
-        $script:LastPrs = @()
-        foreach ($repo in @('f-i-d/samurai_cart_v3', 'f-i-d/samurai_cart_v3_frontend')) {
-            $short = $repo.Split('/')[-1] -replace '^samurai_cart_v3', 'cart'
-            foreach ($mode in @('review', 'mine')) {
-                try {
-                    $prs = Get-PrInfo $repo $mode
-                    if ($prs -is [string]) { Write-Host "  [$short/$mode] gh unavailable" -ForegroundColor Red }
-                    elseif ($prs) {
-                        foreach ($pr in @($prs)) {
-                            $script:LastPrs += $pr
-                            $col = switch ($pr.Ci) { 'x' {'Red'} '~' {'Yellow'} default {'Gray'} }
-                            Write-Host ("  [$short/$mode] " + (Format-PrLine $pr)) -ForegroundColor $col
-                        }
-                    }
-                } catch { Write-Host "  [$short/$mode] error" -ForegroundColor Red }
+
+        Write-Host '  == Health ==' -ForegroundColor Cyan
+        try {
+            foreach ($s in (Get-ServiceHealth)) {
+                Write-Host ('  ' + (Format-HealthLine $s)) -ForegroundColor $(if ($s.Up) { 'Green' } else { 'Red' })
             }
-        }
+        } catch { Write-Host "  health error: $($_.Exception.Message)" -ForegroundColor Red }
+
         Write-Host ''
         Write-Host '  [r]efresh  [o]pen-PR  [d]ocker  [a]claude  [g]ithub  [c]ode  [j]ira  [l]ocalhost  [q]uit' -ForegroundColor DarkGray
         $k = [Console]::ReadKey($true)
@@ -149,9 +130,10 @@ function Invoke-Dashboard {
                 ([ConsoleKey]::Q) { Clear-Host; return }
                 ([ConsoleKey]::O) {
                     Write-Host ''
-                    $n = Read-Host '  open PR #'
-                    $url = Resolve-PrUrl $script:LastPrs $n
-                    if ($url) { Open-Url $url } else { Write-Host "  no PR #$n on the board" -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
+                    $repo = Resolve-Repo (Read-Host '  PR in [a]dmin / [s]tore')
+                    $n = Read-Host "  $($repo.Name) PR #"
+                    if ($n -match '^\d+$') { Open-Url "https://github.com/f-i-d/$($repo.Slug)/pull/$n" }
+                    else { Write-Host '  not a number' -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
                 }
                 ([ConsoleKey]::D) {
                     Write-Host ''
@@ -164,11 +146,17 @@ function Invoke-Dashboard {
                 }
                 ([ConsoleKey]::A) {
                     Write-Host ''
-                    $r = Read-Host '  claude in [a]dmin / [s]tore'
-                    if ($r -match '^[Ss]') { Open-ClaudeSession $script:Store } else { Open-ClaudeSession $script:Admin }
+                    Open-ClaudeSession (Resolve-Repo (Read-Host '  claude in [a]dmin / [s]tore')).Path
                 }
-                ([ConsoleKey]::G) { Open-Url 'https://github.com/f-i-d/samurai_cart_v3'; Open-Url 'https://github.com/f-i-d/samurai_cart_v3_frontend' }
-                ([ConsoleKey]::C) { code $script:Admin; code $script:Store }
+                ([ConsoleKey]::G) {
+                    Write-Host ''
+                    $repo = Resolve-Repo (Read-Host '  GitHub [a]dmin / [s]tore')
+                    Open-Url "https://github.com/f-i-d/$($repo.Slug)"
+                }
+                ([ConsoleKey]::C) {
+                    Write-Host ''
+                    code (Resolve-Repo (Read-Host '  VS Code [a]dmin / [s]tore')).Path
+                }
                 ([ConsoleKey]::J) { Open-Url 'https://f-i-d.atlassian.net/jira/software/projects/V3/list' }
                 ([ConsoleKey]::L) { Open-Url 'http://localhost:3000'; Open-Url 'http://localhost:3001' }
                 default { }   # r / any other key -> re-render
