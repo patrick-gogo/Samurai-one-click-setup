@@ -87,6 +87,14 @@ function Open-ClaudeSession([string]$Repo) {
     wt -w samurai new-tab --title "claude ($name)" --suppressApplicationTitle -d $Repo pwsh -NoExit -Command claude
 }
 
+function Get-GogoSites {
+    @(
+        [pscustomobject]@{ Name = 'Sprout Employee Dashboard'; Url = 'https://gogoitlab.hrhub.ph/EmployeeDashboard.aspx' }
+        [pscustomobject]@{ Name = 'GOGO Monthly Shift';        Url = 'https://docs.google.com/spreadsheets/d/1lpxi0-z0uDjoUmCFijgvUraBabxMEEnYwVA6Gglm9ic/edit?gid=926308299#gid=926308299' }
+        [pscustomobject]@{ Name = 'Conference Room Calendar';  Url = 'https://docs.google.com/spreadsheets/d/1RYoQoczkIKbnbPFlkGP7DWC7uES3RkVpocNhLKv2BzA/edit?gid=1980583467#gid=1980583467' }
+    )
+}
+
 # ---------- main loop ----------
 function Invoke-Dashboard {
     while ($true) {
@@ -123,7 +131,7 @@ function Invoke-Dashboard {
         } catch { Write-Host "  health error: $($_.Exception.Message)" -ForegroundColor Red }
 
         Write-Host ''
-        Write-Host '  [r]efresh  [o]pen-PR  [d]ocker  [a]claude  [g]ithub  [c]ode  [j]ira  [l]ocalhost  [q]uit' -ForegroundColor DarkGray
+        Write-Host '  [r]efresh  [o]pen-PR  [d]ocker  [a]claude  [g]ithub  [c]ode  [j]ira  [l]ocalhost  [w]gogo  [q]uit' -ForegroundColor DarkGray
         $k = [Console]::ReadKey($true)
         try {
             switch ($k.Key) {
@@ -159,6 +167,14 @@ function Invoke-Dashboard {
                 }
                 ([ConsoleKey]::J) { Open-Url 'https://f-i-d.atlassian.net/jira/software/projects/V3/list' }
                 ([ConsoleKey]::L) { Open-Url 'http://localhost:3000'; Open-Url 'http://localhost:3001' }
+                ([ConsoleKey]::W) {
+                    Write-Host ''
+                    $sites = Get-GogoSites
+                    for ($i = 0; $i -lt $sites.Count; $i++) { Write-Host ("  [$($i + 1)] " + $sites[$i].Name) -ForegroundColor Gray }
+                    $pick = Read-Host '  open which'
+                    if ($pick -match '^\d+$' -and [int]$pick -ge 1 -and [int]$pick -le $sites.Count) { Open-Url $sites[[int]$pick - 1].Url }
+                    else { Write-Host '  cancelled' -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
+                }
                 default { }   # r / any other key -> re-render
             }
         } catch { Write-Host "  action error: $($_.Exception.Message)" -ForegroundColor Red; Start-Sleep -Seconds 1 }

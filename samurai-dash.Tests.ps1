@@ -38,6 +38,11 @@ Assert 'repo-sel: default'      { (Resolve-Repo '').Name -eq 'admin' }
 Assert 'health: up'             { (Format-HealthLine ([pscustomobject]@{Name='admin FE';Url='http://localhost:3000';Up=$true})) -match 'admin FE\s+http://localhost:3000\s+up$' }
 Assert 'health: down'           { (Format-HealthLine ([pscustomobject]@{Name='store FE';Url='http://localhost:3001';Up=$false})) -match 'down$' }
 
+# --- Get-GogoSites ---
+Assert 'gogo: 3 sites'          { (Get-GogoSites).Count -eq 3 }
+Assert 'gogo: sprout url'       { (Get-GogoSites)[0].Url -match 'hrhub\.ph/EmployeeDashboard' }
+Assert 'gogo: labels'          { ((Get-GogoSites).Name -join '|') -eq 'Sprout Employee Dashboard|GOGO Monthly Shift|Conference Room Calendar' }
+
 Write-Host ''
 if ($script:ran -eq 0) { Write-Host 'NO TESTS RAN' -ForegroundColor Red; exit 1 }
 if ($script:fails) { Write-Host "$($script:fails)/$($script:ran) FAILED" -ForegroundColor Red; exit 1 } else { Write-Host "ALL $($script:ran) PASS" -ForegroundColor Green }
