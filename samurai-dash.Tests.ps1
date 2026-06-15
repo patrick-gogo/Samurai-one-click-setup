@@ -42,6 +42,15 @@ Assert 'pr: draft+conflicts'    { (Format-PrLine ([pscustomobject]@{Number=1;Tit
 Assert 'pr: null input -> 0 rows'  { @(ConvertFrom-GhPr $null).Count -eq 0 }
 Assert 'pr: empty input -> 0 rows' { @(ConvertFrom-GhPr @()).Count -eq 0 }
 
+# --- Resolve-PrUrl ---
+Assert 'resolvepr: found'       { (Resolve-PrUrl @([pscustomobject]@{Number=169;Url='u169'}, [pscustomobject]@{Number=12;Url='u12'}) 12) -eq 'u12' }
+Assert 'resolvepr: not found'   { $null -eq (Resolve-PrUrl @([pscustomobject]@{Number=169;Url='u169'}) 999) }
+
+# --- Parse-DockerCmd ---
+Assert 'dockercmd: valid'       { $c = (Parse-DockerCmd 'restart api'); ($c.Action -eq 'restart') -and ($c.Service -eq 'api') }
+Assert 'dockercmd: bad action'  { $null -eq (Parse-DockerCmd 'frobnicate api') }
+Assert 'dockercmd: no service'  { $null -eq (Parse-DockerCmd 'restart') }
+
 Write-Host ''
 if ($script:ran -eq 0) { Write-Host 'NO TESTS RAN' -ForegroundColor Red; exit 1 }
 if ($script:fails) { Write-Host "$($script:fails)/$($script:ran) FAILED" -ForegroundColor Red; exit 1 } else { Write-Host "ALL $($script:ran) PASS" -ForegroundColor Green }

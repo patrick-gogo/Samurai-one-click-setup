@@ -53,7 +53,7 @@ function ConvertFrom-GhPr($prs) {
         if ($null -eq $p) { continue }   # gh '[]' parses to $null in pwsh; @($null) iterates once
         [pscustomobject]@{
             Number = $p.number; Title = $p.title; Ci = Get-CiState $p.statusCheckRollup
-            Draft = [bool]$p.isDraft; Mergeable = $p.mergeable
+            Draft = [bool]$p.isDraft; Mergeable = $p.mergeable; Url = $p.url
         }
     }
 }
@@ -67,11 +67,35 @@ function Format-PrLine($pr) {
 }
 
 function Get-PrInfo([string]$Repo, [string]$Mode) {
-    $a = @('pr','list','--repo',$Repo,'--json','number,title,isDraft,mergeable,statusCheckRollup','--limit','15')
+    $a = @('pr','list','--repo',$Repo,'--json','number,title,isDraft,mergeable,statusCheckRollup,url','--limit','15')
     if ($Mode -eq 'mine') { $a += @('--author','@me') } else { $a += @('--search','review-requested:@me') }
     $json = gh @a 2>$null
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($json)) { return 'UNAVAILABLE' }   # gh failed/offline
     ConvertFrom-GhPr (ConvertFrom-Json $json)   # emits 0..N pr objects (nothing when the list is [])
+}
+
+function Resolve-PrUrl($prs, $number) {
+    foreach ($p in @($prs)) { if ([string]$p.Number -eq [string]$number) { return $p.Url } }
+    return $null
+}
+
+function Parse-DockerCmd($text) {
+    $parts = @(($text -split '\s+') | Where-Object { $_ })
+    if ($parts.Count -lt 2) { return $null }
+    $action = $parts[0].ToLower()
+    if ($action -notin @('restart', 'stop', 'start')) { return $null }
+    [pscustomobject]@{ Action = $action; Service = $parts[1] }
+}
+
+function Open-Url([string]$Url) { Start-Process $Url }
+
+function Invoke-DockerCtl([string]$Action, [string]$Service) {
+    docker compose -f "$script:Admin\docker-compose.yml" $Action $Service
+}
+
+function Open-ClaudeSession([string]$Repo) {
+    $name = Split-Path $Repo -Leaf
+    wt -w samurai new-tab --title "claude ($name)" --suppressApplicationTitle -d $Repo pwsh -NoExit -Command claude
 }
 
 function Invoke-Dashboard {
@@ -100,6 +124,7 @@ function Invoke-Dashboard {
         } catch { Write-Host "  docker error: $($_.Exception.Message)" -ForegroundColor Red }
         Write-Host '  == Pull Requests ==' -ForegroundColor Cyan
         Write-Host '  fetching...' -ForegroundColor DarkGray
+        $script:LastPrs = @()
         foreach ($repo in @('f-i-d/samurai_cart_v3', 'f-i-d/samurai_cart_v3_frontend')) {
             $short = $repo.Split('/')[-1] -replace '^samurai_cart_v3', 'cart'
             foreach ($mode in @('review', 'mine')) {
@@ -108,6 +133,7 @@ function Invoke-Dashboard {
                     if ($prs -is [string]) { Write-Host "  [$short/$mode] gh unavailable" -ForegroundColor Red }
                     elseif ($prs) {
                         foreach ($pr in @($prs)) {
+                            $script:LastPrs += $pr
                             $col = switch ($pr.Ci) { 'x' {'Red'} '~' {'Yellow'} default {'Gray'} }
                             Write-Host ("  [$short/$mode] " + (Format-PrLine $pr)) -ForegroundColor $col
                         }
@@ -116,10 +142,38 @@ function Invoke-Dashboard {
             }
         }
         Write-Host ''
-        Write-Host '  [r] refresh   [q] quit' -ForegroundColor DarkGray
+        Write-Host '  [r]efresh  [o]pen-PR  [d]ocker  [a]claude  [g]ithub  [c]ode  [j]ira  [l]ocalhost  [q]uit' -ForegroundColor DarkGray
         $k = [Console]::ReadKey($true)
-        if ($k.Key -eq [ConsoleKey]::Q) { Clear-Host; break }
-        # any other key (incl. r) loops -> re-render
+        try {
+            switch ($k.Key) {
+                ([ConsoleKey]::Q) { Clear-Host; return }
+                ([ConsoleKey]::O) {
+                    Write-Host ''
+                    $n = Read-Host '  open PR #'
+                    $url = Resolve-PrUrl $script:LastPrs $n
+                    if ($url) { Open-Url $url } else { Write-Host "  no PR #$n on the board" -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
+                }
+                ([ConsoleKey]::D) {
+                    Write-Host ''
+                    $cmd = Parse-DockerCmd (Read-Host '  docker (e.g. restart api)')
+                    if ($cmd) {
+                        Invoke-DockerCtl $cmd.Action $cmd.Service
+                        Write-Host '  (press any key to return)' -ForegroundColor DarkGray
+                        [Console]::ReadKey($true) | Out-Null
+                    } else { Write-Host '  usage: <restart|stop|start> <service>' -ForegroundColor Yellow; Start-Sleep -Seconds 1 }
+                }
+                ([ConsoleKey]::A) {
+                    Write-Host ''
+                    $r = Read-Host '  claude in [a]dmin / [s]tore'
+                    if ($r -match '^[Ss]') { Open-ClaudeSession $script:Store } else { Open-ClaudeSession $script:Admin }
+                }
+                ([ConsoleKey]::G) { Open-Url 'https://github.com/f-i-d/samurai_cart_v3'; Open-Url 'https://github.com/f-i-d/samurai_cart_v3_frontend' }
+                ([ConsoleKey]::C) { code $script:Admin; code $script:Store }
+                ([ConsoleKey]::J) { Open-Url 'https://f-i-d.atlassian.net/jira/software/projects/V3/list' }
+                ([ConsoleKey]::L) { Open-Url 'http://localhost:3000'; Open-Url 'http://localhost:3001' }
+                default { }   # r / any other key -> re-render
+            }
+        } catch { Write-Host "  action error: $($_.Exception.Message)" -ForegroundColor Red; Start-Sleep -Seconds 1 }
     }
 }
 
