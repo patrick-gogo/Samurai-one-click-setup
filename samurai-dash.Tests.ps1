@@ -21,27 +21,33 @@ Assert 'repo: dirty+unpushed'   { (Format-RepoLine ([pscustomobject]@{Name='stor
 Assert 'repo: behind'           { (Format-RepoLine ([pscustomobject]@{Name='admin';Branch='m';Dirty=0;Unpushed=0;Behind=3;Ok=$true})) -match '\(clean\)  \[behind 3\]' }
 Assert 'repo: n/a'              { (Format-RepoLine ([pscustomobject]@{Name='x';Ok=$false})) -match '^x\s+n/a$' }
 
-# --- Format-DockerLine ---
-Assert 'docker: line format'    { (Format-DockerLine ([pscustomobject]@{Service='api';State='running';Status='Up 2 hours (healthy)'})) -match '^api\s+Up 2 hours \(healthy\)$' }
-
 # --- Parse-DockerCmd ---
 Assert 'dockercmd: valid'       { $c = (Parse-DockerCmd 'restart api'); ($c.Action -eq 'restart') -and ($c.Service -eq 'api') }
 Assert 'dockercmd: bad action'  { $null -eq (Parse-DockerCmd 'frobnicate api') }
 Assert 'dockercmd: no service'  { $null -eq (Parse-DockerCmd 'restart') }
 
-# --- Resolve-Repo (admin/store picker; defaults to admin) ---
+# --- Resolve-Repo ---
 Assert 'repo-sel: a -> admin'   { (Resolve-Repo 'a').Slug -eq 'samurai_cart_v3' }
 Assert 'repo-sel: s -> store'   { (Resolve-Repo 's').Slug -eq 'samurai_cart_v3_frontend' }
 Assert 'repo-sel: default'      { (Resolve-Repo '').Name -eq 'admin' }
-
-# --- Format-HealthLine ---
-Assert 'health: up'             { (Format-HealthLine ([pscustomobject]@{Name='admin FE';Url='http://localhost:3000';Up=$true})) -match 'admin FE\s+http://localhost:3000\s+up$' }
-Assert 'health: down'           { (Format-HealthLine ([pscustomobject]@{Name='store FE';Url='http://localhost:3001';Up=$false})) -match 'down$' }
 
 # --- Get-GogoSites ---
 Assert 'gogo: 3 sites'          { (Get-GogoSites).Count -eq 3 }
 Assert 'gogo: sprout url'       { (Get-GogoSites)[0].Url -match 'hrhub\.ph/EmployeeDashboard' }
 Assert 'gogo: labels'          { ((Get-GogoSites).Name -join '|') -eq 'Sprout Employee Dashboard|GOGO Monthly Shift|Conference Room Calendar' }
+
+# --- Format-HealthLine (short name + port; glyph conveys up/down) ---
+Assert 'health: line'           { (Format-HealthLine ([pscustomobject]@{Name='admin FE';Port=3000})) -match '^admin FE\s+:3000$' }
+
+# --- Get-StatusGlyph ---
+Assert 'glyph: ok'              { $g = (Get-StatusGlyph 'ok');   ($g.Glyph -eq 'ok') -and ($g.Color -eq 'Green') }
+Assert 'glyph: warn'           { (Get-StatusGlyph 'warn').Color -eq 'Yellow' }
+Assert 'glyph: down'           { (Get-StatusGlyph 'down').Color -eq 'Red' }
+
+# --- Format-PanelTop / Bottom ---
+Assert 'paneltop: width'        { (Format-PanelTop 'REPOS' 60).Length -eq 60 }
+Assert 'paneltop: title'        { (Format-PanelTop 'REPOS' 60) -match '^\+- REPOS ' }
+Assert 'panelbottom: width'     { (Format-PanelBottom 60).Length -eq 60 }
 
 Write-Host ''
 if ($script:ran -eq 0) { Write-Host 'NO TESTS RAN' -ForegroundColor Red; exit 1 }

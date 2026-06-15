@@ -1,9 +1,11 @@
 # samurai-dash.ps1 — Samurai command-center dashboard (keypress-refresh TUI).
-# Watch-only board + a command bar of actions. ASCII-only output. Dot-source with -NoRun for tests.
+# Boxed panels + command bar of actions. ASCII-only output. Dot-source with -NoRun for tests.
 param([switch]$NoRun)
 
 $script:Admin = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
 $script:Store = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3_frontend'
+$script:W = 60          # box width
+$script:Inner = $script:W - 4
 
 # ---------- Repos ----------
 function Get-RepoInfo([string]$Name, [string]$Repo) {
@@ -36,11 +38,7 @@ function Get-DockerInfo {
     }
 }
 
-function Format-DockerLine($c) {
-    '{0,-16} {1}' -f $c.Service, $c.Status
-}
-
-# ---------- Health (actual HTTP reachability — the npm FEs aren't in Docker) ----------
+# ---------- Health (HTTP reachability — the npm FEs aren't in Docker) ----------
 function Test-Url([string]$Url) {
     try { return ((Invoke-WebRequest $Url -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop).StatusCode -lt 500) }
     catch { return $false }
@@ -48,19 +46,49 @@ function Test-Url([string]$Url) {
 
 function Get-ServiceHealth {
     @(
-        [pscustomobject]@{ Name = 'admin FE';  Url = 'http://localhost:3000';      Up = (Test-Url 'http://localhost:3000') }
-        [pscustomobject]@{ Name = 'store FE';  Url = 'http://localhost:3001';      Up = (Test-Url 'http://localhost:3001') }
-        [pscustomobject]@{ Name = 'admin API'; Url = 'http://localhost:8000/docs'; Up = (Test-Url 'http://localhost:8000/docs') }
+        [pscustomobject]@{ Name = 'admin FE';  Port = 3000; Url = 'http://localhost:3000';      Up = (Test-Url 'http://localhost:3000') }
+        [pscustomobject]@{ Name = 'store FE';  Port = 3001; Url = 'http://localhost:3001';      Up = (Test-Url 'http://localhost:3001') }
+        [pscustomobject]@{ Name = 'admin API'; Port = 8000; Url = 'http://localhost:8000/docs'; Up = (Test-Url 'http://localhost:8000/docs') }
     )
 }
 
-function Format-HealthLine($s) {
-    '{0,-10} {1,-28} {2}' -f $s.Name, $s.Url, $(if ($s.Up) { 'up' } else { 'down' })
+function Format-HealthLine($s) { '{0,-10} :{1}' -f $s.Name, $s.Port }
+
+# ---------- box framework (pure border/glyph builders + one Write-Host row drawer) ----------
+function Get-StatusGlyph([string]$State) {
+    switch ($State) {
+        'ok'   { [pscustomobject]@{ Glyph = 'ok'; Color = 'Green' } }
+        'warn' { [pscustomobject]@{ Glyph = '~ '; Color = 'Yellow' } }
+        default { [pscustomobject]@{ Glyph = 'x '; Color = 'Red' } }   # 'down'
+    }
 }
+
+function Format-PanelTop([string]$Title, [int]$Width) {
+    $cap = "+- $Title "
+    $cap + ('-' * [Math]::Max(3, $Width - $cap.Length - 1)) + '+'
+}
+
+function Format-PanelBottom([int]$Width) { '+' + ('-' * ($Width - 2)) + '+' }
+
+# Draw "  | <segments> <pad> |". Segments = @(@{Text;Color}, ...) so cells keep their own colors.
+function Write-PanelRow($Segments, [int]$Inner) {
+    Write-Host '  | ' -NoNewline -ForegroundColor DarkCyan
+    $len = 0
+    foreach ($s in @($Segments)) {
+        $t = [string]$s.Text
+        if ($len + $t.Length -gt $Inner) { $t = $t.Substring(0, [Math]::Max(0, $Inner - $len)) }  # never overflow the box
+        Write-Host $t -NoNewline -ForegroundColor $s.Color
+        $len += $t.Length
+    }
+    Write-Host ((' ' * [Math]::Max(0, $Inner - $len)) + ' |') -ForegroundColor DarkCyan
+}
+
+function Write-PanelTop([string]$Title)    { Write-Host ('  ' + (Format-PanelTop $Title $script:W)) -ForegroundColor DarkCyan }
+function Write-PanelBottom                 { Write-Host ('  ' + (Format-PanelBottom $script:W)) -ForegroundColor DarkCyan }
 
 # ---------- action helpers ----------
 function Resolve-Repo([string]$Key) {
-    # 'a' (or default) -> admin, 's' -> store. Returns its path + GitHub slug + short name.
+    # 'a' (or default) -> admin, 's' -> store. Returns path + GitHub slug + short name.
     if ($Key -match '^[Ss]') {
         [pscustomobject]@{ Path = $script:Store; Slug = 'samurai_cart_v3_frontend'; Name = 'store' }
     } else {
@@ -98,37 +126,65 @@ function Get-GogoSites {
 # ---------- main loop ----------
 function Invoke-Dashboard {
     while ($true) {
+        # fetch once per refresh (reused by the header summary + the panels)
+        $repos  = @((Get-RepoInfo 'admin' $script:Admin), (Get-RepoInfo 'store' $script:Store))
+        $dock   = $null; try { $dock = Get-DockerInfo } catch {}
+        $health = Get-ServiceHealth
+        $dockDown   = if ($null -eq $dock) { 1 } else { @($dock | Where-Object { $_.State -ne 'running' }).Count }
+        $healthDown = @($health | Where-Object { -not $_.Up }).Count
+        $issues     = $dockDown + $healthDown
+
         Clear-Host
         Write-Host ''
-        Write-Host '  +=================== SAMURAI COMMAND CENTER ===================+' -ForegroundColor DarkCyan
-        Write-Host ('    refreshed ' + (Get-Date).ToString('ddd HH:mm:ss')) -ForegroundColor DarkGray
+        # --- header ---
+        Write-PanelTop 'SAMURAI COMMAND CENTER'
+        $statusText  = if ($issues -eq 0) { 'all systems go' } else { "$issues issue$(if ($issues -gt 1) { 's' })" }
+        $statusColor = if ($issues -eq 0) { 'Green' } else { 'Red' }
+        Write-PanelRow @(
+            @{ Text = $statusText; Color = $statusColor },
+            @{ Text = ('   ' + (Get-Date).ToString('ddd HH:mm:ss')); Color = 'DarkGray' }
+        ) $script:Inner
+        Write-PanelBottom
 
-        Write-Host '  == Repos ==' -ForegroundColor Cyan
-        foreach ($r in @((Get-RepoInfo 'admin' $script:Admin), (Get-RepoInfo 'store' $script:Store))) {
-            $color = if (-not $r.Ok) { 'Red' } elseif ($r.Dirty -or $r.Unpushed) { 'Yellow' } else { 'Green' }
-            Write-Host ('  ' + (Format-RepoLine $r)) -ForegroundColor $color
+        # --- repos ---
+        Write-PanelTop 'REPOS'
+        foreach ($r in $repos) {
+            $state = if (-not $r.Ok) { 'down' } elseif ($r.Dirty -or $r.Unpushed) { 'warn' } else { 'ok' }
+            $g = Get-StatusGlyph $state
+            Write-PanelRow @(@{ Text = ($g.Glyph + ' '); Color = $g.Color }, @{ Text = (Format-RepoLine $r); Color = 'Gray' }) $script:Inner
+        }
+        Write-PanelBottom
+
+        # --- docker (compact colored grid, 3 per row) ---
+        if ($null -eq $dock) {
+            Write-PanelTop 'DOCKER  engine down'
+            Write-PanelRow @(@{ Text = 'engine down'; Color = 'Red' }) $script:Inner
+            Write-PanelBottom
+        } else {
+            $svcs = @($dock)
+            $upCount = @($svcs | Where-Object { $_.State -eq 'running' }).Count
+            Write-PanelTop "DOCKER  $upCount/$($svcs.Count) up"
+            for ($i = 0; $i -lt $svcs.Count; $i += 3) {
+                $rowItems = $svcs[$i..([Math]::Min($i + 2, $svcs.Count - 1))]
+                $segs = @()
+                foreach ($c in $rowItems) {
+                    $state = if ($c.State -ne 'running') { 'down' } elseif ($c.Status -match 'unhealthy') { 'warn' } else { 'ok' }
+                    $g = Get-StatusGlyph $state
+                    $segs += @{ Text = ($g.Glyph + ' '); Color = $g.Color }
+                    $segs += @{ Text = ('{0,-14}' -f $c.Service); Color = 'Gray' }
+                }
+                Write-PanelRow $segs $script:Inner
+            }
+            Write-PanelBottom
         }
 
-        Write-Host '  == Docker ==' -ForegroundColor Cyan
-        try {
-            $dock = Get-DockerInfo
-            if ($null -eq $dock) { Write-Host '  engine down' -ForegroundColor Red }
-            else {
-                $up = @($dock | Where-Object { $_.State -eq 'running' }).Count
-                Write-Host ("  ($up/$(@($dock).Count) up)") -ForegroundColor DarkGray
-                foreach ($c in $dock) {
-                    $col = if ($c.State -eq 'running') { 'Green' } else { 'Red' }
-                    Write-Host ('  ' + (Format-DockerLine $c)) -ForegroundColor $col
-                }
-            }
-        } catch { Write-Host "  docker error: $($_.Exception.Message)" -ForegroundColor Red }
-
-        Write-Host '  == Health ==' -ForegroundColor Cyan
-        try {
-            foreach ($s in (Get-ServiceHealth)) {
-                Write-Host ('  ' + (Format-HealthLine $s)) -ForegroundColor $(if ($s.Up) { 'Green' } else { 'Red' })
-            }
-        } catch { Write-Host "  health error: $($_.Exception.Message)" -ForegroundColor Red }
+        # --- health ---
+        Write-PanelTop 'HEALTH'
+        foreach ($s in $health) {
+            $g = Get-StatusGlyph $(if ($s.Up) { 'ok' } else { 'down' })
+            Write-PanelRow @(@{ Text = ($g.Glyph + ' '); Color = $g.Color }, @{ Text = (Format-HealthLine $s); Color = 'Gray' }) $script:Inner
+        }
+        Write-PanelBottom
 
         Write-Host ''
         Write-Host '  [r]efresh  [o]pen-PR  [d]ocker  [a]claude  [g]ithub  [c]ode  [j]ira  [l]ocalhost  [w]gogo  [q]uit' -ForegroundColor DarkGray
