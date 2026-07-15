@@ -124,7 +124,7 @@ $wtArgs = @(
     ';', 'split-pane', '-H', '--suppressApplicationTitle', '-d', $store,            'pwsh', '-NoExit', '-Command', 'npm run dev -- --port 3001',
     ';', 'move-focus', 'left',
     ';', 'split-pane', '-H', '--suppressApplicationTitle', '-d', $admin, 'pwsh', '-NoExit', '-Command', 'docker compose logs -f --tail=100 api',
-    ';', 'new-tab', '--title', 'Dashboard', '--suppressApplicationTitle', '-d', 'C:\Users\John Patrick Mandal\Desktop\samurai-patrick-command-center', 'pwsh', '-NoExit', '-Command', 'npm run dev; Start-Process http://localhost:3002',
+    ';', 'new-tab', '--title', 'Dashboard', '--suppressApplicationTitle', '-d', 'C:\Users\John Patrick Mandal\Desktop\samurai-patrick-command-center', 'pwsh', '-NoExit', '-Command', 'Start-Job { Start-Sleep -Seconds 8; Start-Process http://localhost:3002 } | Out-Null; npm run dev',
     ';', 'new-tab', '--title', 'Claude - Admin',      '--suppressApplicationTitle', '-d', $admin,           'pwsh', '-NoExit', '-Command', 'claude',
     ';', 'new-tab', '--title', 'Claude - Storefront', '--suppressApplicationTitle', '-d', $store,           'pwsh', '-NoExit', '-Command', 'claude',
     ';', 'focus-tab', '-t', '0'   # land on the Servers tab
