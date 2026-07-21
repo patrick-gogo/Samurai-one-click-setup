@@ -3,10 +3,13 @@
 # ensures samurai_cart_test_{key} exists, and runs pytest inside the shared api image with
 # TEST_DATABASE_URL pointed at it — so concurrent test runs from different worktrees never
 # race on the same schema. Dot-source with -NoRun for tests.
+#
+# Usage: samurai-test [-Ticket V3-XXXX] [pytest args...]
+# Deliberately has no [Parameter(...)] attributes beyond nothing at all (a plain/simple
+# function) — pytest's own flags (-k, -v, -m, ...) must never collide with a declared
+# PowerShell parameter or an auto-added common parameter (-Verbose, -Debug, ...), which is
+# exactly what happens the moment a script gains any [Parameter(...)] attribute.
 param(
-    [string]$Key,
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$PytestArgs,
     [switch]$NoRun
 )
 
@@ -20,6 +23,22 @@ function Resolve-TicketKey([string]$ExplicitKey, [string]$RepoRoot) {
     return (Get-TicketKeyFromBranch $branch)
 }
 
+function Split-SamuraiTestArgs([string[]]$InputArgs) {
+    $ticket = $null
+    $rest = New-Object System.Collections.Generic.List[string]
+    $i = 0
+    while ($i -lt $InputArgs.Count) {
+        if ($InputArgs[$i] -eq '-Ticket' -and ($i + 1) -lt $InputArgs.Count) {
+            $ticket = $InputArgs[$i + 1]
+            $i += 2
+        } else {
+            $rest.Add($InputArgs[$i])
+            $i++
+        }
+    }
+    return [pscustomobject]@{ Ticket = $ticket; PytestArgs = $rest.ToArray() }
+}
+
 function Invoke-SamuraiTest {
     param([string]$Key, [string[]]$PytestArgs)
 
@@ -31,7 +50,7 @@ function Invoke-SamuraiTest {
 
     $ticketKey = Resolve-TicketKey -ExplicitKey $Key -RepoRoot $repoRoot
     if (-not $ticketKey) {
-        Write-Host "Could not determine a ticket key from '$repoRoot' or its branch. Pass -Key V3-XXXX explicitly." -ForegroundColor Red
+        Write-Host "Could not determine a ticket key from '$repoRoot' or its branch. Pass -Ticket V3-XXXX explicitly." -ForegroundColor Red
         return
     }
 
@@ -53,4 +72,7 @@ function Invoke-SamuraiTest {
         pytest @PytestArgs
 }
 
-if (-not $NoRun) { Invoke-SamuraiTest -Key $Key -PytestArgs $PytestArgs }
+if (-not $NoRun) {
+    $parsed = Split-SamuraiTestArgs $args
+    Invoke-SamuraiTest -Key $parsed.Ticket -PytestArgs $parsed.PytestArgs
+}

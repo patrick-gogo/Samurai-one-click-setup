@@ -18,7 +18,7 @@ function Assert([string]$Msg, [scriptblock]$Cond) {
 Assert 'suffix: uppercase key'    { (ConvertTo-TestDbSuffix 'V3-1193') -eq 'v3_1193' }
 Assert 'suffix: lowercase input'  { (ConvertTo-TestDbSuffix 'v3-1193') -eq 'v3_1193' }
 Assert 'suffix: invalid key throws' {
-    try { ConvertTo-TestDbSuffix 'not-a-key'; $false } catch { $true }
+    try { ConvertTo-TestDbSuffix 'not-a-key' | Out-Null; $false } catch { $true }
 }
 
 # --- Get-TicketKeyFromFolderName ---
