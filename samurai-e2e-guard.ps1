@@ -145,12 +145,12 @@ function Invoke-E2eSmokeRun([string]$RepoRoot, [string]$DbUrl, [string]$TicketKe
             # `npm run start` itself and owns that process's lifecycle, so this function does
             # not start or stop the frontend directly.
             #
-            # BACKEND_URL must stay set through the whole test run, not just the build:
-            # app/api/v1/[...path]/route.ts reads process.env.BACKEND_URL at request time to
-            # pick which backend to proxy to. If it were cleared before `next start` boots (as
-            # happens with NEXT_PUBLIC_E2E_AUTH_BYPASS above), the running server would fall
-            # back to :8000 and silently proxy smoke-test traffic at whatever is listening
-            # there instead of this run's isolated :8099 backend.
+            # BACKEND_URL must be set before `npm run build` (line 131 above): next.config.ts
+            # rewrites() reads it at build time and bakes the /api/v1/:path* rewrite destination
+            # into the build. It doesn't need to stay set through the Playwright run (the rewrite
+            # is already baked in), but we keep it set for clarity. If BACKEND_URL were unset at
+            # build time, the rewrite would default to 'http://localhost:8001', causing smoke tests
+            # to proxy to the wrong backend instead of this run's isolated :8099 backend.
             #
             # webServer.reuseExistingServer is `!process.env.CI`, so with CI=true below it is
             # false: if :3000 is already held by a real local dev frontend, Playwright fails
