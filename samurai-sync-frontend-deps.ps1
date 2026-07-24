@@ -1,13 +1,13 @@
-# samurai-sync-frontend-deps.ps1 — copy a known-good frontend/node_modules into a worktree
-# instead of a full npm install. node_modules is gitignored, so `git worktree add` never
-# populates it — every fresh worktree otherwise pays a full network install, which on Windows
-# is slow and prone to interruption/corruption (antivirus file-locking mid-extraction, huge
-# packages like @mui/icons-material). Compares git's own committed blob hash for
-# package-lock.json between the source repo and the worktree (NOT raw filesystem content —
-# a partial/broken install can leave a dirty working-copy lockfile that would falsely look
-# "different" even when the actual dependency set is identical). Falls back to leaving
-# node_modules alone whenever the fast path isn't provably safe. Dot-source with -NoRun for
-# tests.
+# samurai-sync-frontend-deps.ps1 — provision a worktree's frontend/node_modules by linking it
+# to the main checkout's shared store via an NTFS directory junction (near-instant, no copy).
+# node_modules is gitignored, so `git worktree add` never populates it, and a full network
+# install is slow and prone to interruption/corruption on Windows (antivirus file-locking
+# mid-extraction, huge packages like @mui/icons-material). Compares git's own committed blob
+# hash for package-lock.json between the source repo and the worktree (NOT raw filesystem
+# content — a partial/broken install can leave a dirty working-copy lockfile that would
+# falsely look "different" even when the actual dependency set is identical). Whenever the
+# lock hashes don't provably match, falls back to a private `npm ci` install in that worktree
+# instead of linking. Dot-source with -NoRun for tests.
 # NOTE: WorktreePath is deliberately NOT [Parameter(Mandatory)] -- mandatory binding fires on
 # dot-source, so `. this.ps1 -NoRun` would prompt for it and hang a non-interactive test run.
 # Validated inside Invoke-SamuraiSyncFrontendDeps instead.
@@ -63,7 +63,12 @@ function Get-ProvisioningMode {
 function Invoke-NpmCi([string]$WorktreePath) {
     Write-Host "Running npm ci in $WorktreePath\frontend -- this worktree's dependency set differs from the main checkout, so it needs its own store. Expect several minutes." -ForegroundColor Cyan
     Push-Location "$WorktreePath\frontend"
-    try { npm ci; $code = $LASTEXITCODE } finally { Pop-Location }
+    # npm ci's stdout (progress, deprecation notices, postinstall output) must never join this
+    # function's own output stream -- an unredirected native command's stdout would land in the
+    # array that `exit (Invoke-NpmCi ...)` receives, and `exit` given an array always yields 0.
+    # Out-Host sends it straight to the console instead, so the only pipeline-visible value left
+    # is the `return` below. $LASTEXITCODE is read immediately after, before anything else can run.
+    try { npm ci 2>&1 | Out-Host; $code = $LASTEXITCODE } finally { Pop-Location }
     if ($code -ne 0) {
         Write-Host "npm ci failed (exit $code) -- frontend deps are NOT ready in this worktree." -ForegroundColor Red
         return 1
