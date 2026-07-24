@@ -2,15 +2,18 @@
 # in one step. Manual/opt-in — run whenever you've decided a ticket is really done (typically
 # after /wrap-ticket has already flipped the vault status; /wrap-ticket itself never touches
 # branches or worktrees). Dot-source with -NoRun for tests.
+# NOTE: Key is deliberately NOT [Parameter(Mandatory)] -- mandatory binding fires on dot-source,
+# so `. this.ps1 -NoRun` would prompt for it and hang a non-interactive test run. Validated
+# inside Invoke-SamuraiCleanupTicket instead.
 param(
-    [Parameter(Mandatory = $true)]
     [string]$Key,
     [switch]$NoRun
 )
 
 . "$PSScriptRoot\samurai-testdb-lib.ps1"
+. "$PSScriptRoot\samurai-junction-lib.ps1"
 
-$script:Desktop = 'C:\Users\John Patrick Mandal\Desktop'
+$script:WorktreesRoot = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3 worktrees'
 $script:MainRepo = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
 
 function Find-TicketWorktree([string]$Key, [string]$BaseDir) {
@@ -18,6 +21,16 @@ function Find-TicketWorktree([string]$Key, [string]$BaseDir) {
     if ($found.Count -eq 0) { return $null }
     if ($found.Count -gt 1) { throw "Multiple worktrees match wt-$Key-*: $($found.FullName -join ', ')" }
     return $found[0].FullName
+}
+
+# Unlink before `git worktree remove`. Removing a worktree with a live junction leaves a
+# dangling junction shell behind and an orphan directory to chase; unlinking first lets git
+# complete cleanly. Only ever removes junctions -- a real private node_modules is left alone.
+function Remove-WorktreeNodeModulesJunction([string]$WorktreePath) {
+    $nm = Join-Path $WorktreePath 'frontend\node_modules'
+    if (-not (Test-IsJunction $nm)) { return $false }
+    Remove-JunctionLink -Path $nm
+    return $true
 }
 
 function Invoke-SamuraiCleanupTicket {
@@ -28,10 +41,13 @@ function Invoke-SamuraiCleanupTicket {
         return
     }
 
-    $worktreePath = Find-TicketWorktree -Key $Key -BaseDir $script:Desktop
+    $worktreePath = Find-TicketWorktree -Key $Key -BaseDir $script:WorktreesRoot
     if (-not $worktreePath) {
-        Write-Host "No worktree found matching wt-$Key-* under $script:Desktop." -ForegroundColor Yellow
+        Write-Host "No worktree found matching wt-$Key-* under $script:WorktreesRoot." -ForegroundColor Yellow
     } else {
+        if (Remove-WorktreeNodeModulesJunction $worktreePath) {
+            Write-Host 'Unlinked frontend/node_modules junction (shared store untouched).' -ForegroundColor Cyan
+        }
         Write-Host "Removing worktree $worktreePath ..." -ForegroundColor Cyan
         git -C $script:MainRepo worktree remove $worktreePath
         if ($LASTEXITCODE -ne 0) {
@@ -47,4 +63,7 @@ function Invoke-SamuraiCleanupTicket {
     Write-Host 'Done.' -ForegroundColor Green
 }
 
-if (-not $NoRun) { Invoke-SamuraiCleanupTicket -Key $Key }
+if (-not $NoRun) {
+    if (-not $Key) { Write-Host 'Key is required (e.g. -Key V3-1193).' -ForegroundColor Red; exit 1 }
+    Invoke-SamuraiCleanupTicket -Key $Key
+}
