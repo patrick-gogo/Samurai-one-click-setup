@@ -45,13 +45,16 @@ function Invoke-SamuraiCleanupTicket {
     if (-not $worktreePath) {
         Write-Host "No worktree found matching wt-$Key-* under $script:WorktreesRoot." -ForegroundColor Yellow
     } else {
-        if (Remove-WorktreeNodeModulesJunction $worktreePath) {
+        $unlinked = Remove-WorktreeNodeModulesJunction $worktreePath
+        if ($unlinked) {
             Write-Host 'Unlinked frontend/node_modules junction (shared store untouched).' -ForegroundColor Cyan
         }
         Write-Host "Removing worktree $worktreePath ..." -ForegroundColor Cyan
         git -C $script:MainRepo worktree remove $worktreePath
         if ($LASTEXITCODE -ne 0) {
-            Write-Host 'git worktree remove failed -- worktree left in place. Resolve manually (e.g. commit/stash changes) and re-run.' -ForegroundColor Red
+            # Unlinking happens first, so a failure here leaves the worktree without node_modules.
+            $note = if ($unlinked) { ' Its frontend/node_modules junction is already unlinked -- re-run samurai-sync-frontend-deps.ps1 if you keep working in it.' } else { '' }
+            Write-Host "git worktree remove failed -- worktree left in place. Resolve manually (e.g. commit/stash changes) and re-run.$note" -ForegroundColor Red
             return
         }
         Write-Host 'Worktree removed.' -ForegroundColor Green

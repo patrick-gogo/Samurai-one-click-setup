@@ -22,7 +22,10 @@ try {
     # --- Find-TicketWorktree (previously untested) ---
     New-Item -ItemType Directory (Join-Path $sandbox 'wt-V3-999-some-slug') -Force | Out-Null
     Assert 'find: matches wt-<key>-*' {
-        (Find-TicketWorktree -Key 'V3-999' -BaseDir $sandbox) -eq (Join-Path $sandbox 'wt-V3-999-some-slug')
+        # Normalize the expected path: $env:TEMP can resolve as an 8.3 short name (JOHNPA~1)
+        # while Find-TicketWorktree returns .FullName in long form.
+        $expected = (Get-Item -LiteralPath (Join-Path $sandbox 'wt-V3-999-some-slug') -Force).FullName
+        (Find-TicketWorktree -Key 'V3-999' -BaseDir $sandbox) -eq $expected
     }
     Assert 'find: no match -> null' { $null -eq (Find-TicketWorktree -Key 'V3-000' -BaseDir $sandbox) }
     New-Item -ItemType Directory (Join-Path $sandbox 'wt-V3-999-other-slug') -Force | Out-Null
