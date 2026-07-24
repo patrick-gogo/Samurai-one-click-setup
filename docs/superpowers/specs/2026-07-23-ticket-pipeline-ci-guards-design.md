@@ -1,6 +1,7 @@
 # Ticket-pipeline CI guards — wiring the DB fix in, and a pre-merge smoke mirror
 
 **Date:** 2026-07-23
+**Status (2026-07-24):** Component 1 proceeded as designed. **Component 2 was built, reviewed, and then scrapped** — `playwright.config.ts` hardcodes the frontend to `:3000` with no override support, so the "isolated from your dev session" premise could only ever be half-true (backend isolated, frontend not). Decided that wasn't worth shipping. See `docs/superpowers/plans/2026-07-23-ticket-pipeline-ci-guards.md` and its progress ledger for the full history — this spec is kept as a record of what was attempted and why it didn't ship, not as a description of what exists today.
 **Scope:** Personal tooling only. Component 1 edits a user-level Claude Code command (`~/.claude/commands/ship-ticket.md`). Component 2 adds a new script to `~/scripts` and edits `~/.claude/commands/open-pr.md`. Nothing here touches the `samurai_cart_v3` repo itself.
 
 **Builds on:** `2026-07-21-multi-agent-workflow-design.md` (worktree-by-default + `samurai-test.ps1`/`samurai-testdb-lib.ps1`). That design fixed test-DB collisions at the script level; this one closes two gaps that surfaced after living with it for two days.
