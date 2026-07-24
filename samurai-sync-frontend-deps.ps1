@@ -60,55 +60,103 @@ function Get-ProvisioningMode {
     }
 }
 
-function Invoke-SamuraiSyncFrontendDeps {
-    param([string]$WorktreePath)
+function Invoke-NpmCi([string]$WorktreePath) {
+    Write-Host "Running npm ci in $WorktreePath\frontend -- this worktree's dependency set differs from the main checkout, so it needs its own store. Expect several minutes." -ForegroundColor Cyan
+    Push-Location "$WorktreePath\frontend"
+    try { npm ci; $code = $LASTEXITCODE } finally { Pop-Location }
+    if ($code -ne 0) {
+        Write-Host "npm ci failed (exit $code) -- frontend deps are NOT ready in this worktree." -ForegroundColor Red
+        return 1
+    }
+    Write-Host 'Frontend deps installed (private store).' -ForegroundColor Green
+    return 0
+}
 
-    # Every terminal path below sets an explicit exit code (0 = copied OR a safe, intentional
-    # skip; 1 = a real error) rather than falling through with whatever exit code the last
-    # internal command happened to leave -- same reasoning as the robocopy normalization below.
+function Invoke-SamuraiSyncFrontendDeps {
+    param([string]$WorktreePath, [switch]$Reclaim)
+
+    # Every terminal path sets an explicit exit code: 0 = provisioned OR a safe intentional
+    # skip, 1 = a real error. /start-ticket step 7b reads this.
+    if (-not $WorktreePath) {
+        Write-Host 'WorktreePath is required.' -ForegroundColor Red
+        exit 1
+    }
     if (-not (Test-Path "$WorktreePath\frontend\package-lock.json")) {
         Write-Host "No frontend/package-lock.json in $WorktreePath -- nothing to sync." -ForegroundColor Yellow
         exit 0
     }
 
+    $sourceStore = "$script:MainRepo\frontend\node_modules".TrimEnd('\')
+    $destStore   = "$WorktreePath\frontend\node_modules"
+
     $sourceHash = Get-CommittedBlobHash $script:MainRepo 'frontend/package-lock.json'
     $targetHash = Get-CommittedBlobHash $WorktreePath 'frontend/package-lock.json'
-
     if (-not $sourceHash -or -not $targetHash) {
-        Write-Host "Could not read package-lock.json's committed blob hash from one side -- skipping fast copy. Run npm ci in $WorktreePath\frontend yourself." -ForegroundColor Yellow
-        exit 0
+        Write-Host "Could not read package-lock.json's committed blob hash from one side -- can't prove the dependency sets match, so falling back to a private install." -ForegroundColor Yellow
+        exit (Invoke-NpmCi $WorktreePath)
     }
 
-    if ($sourceHash -ne $targetHash) {
-        Write-Host "package-lock.json differs (different commits/dependency sets) between the main checkout and this worktree -- skipping fast copy. Run npm ci in $WorktreePath\frontend yourself." -ForegroundColor Yellow
-        exit 0
+    $lockMatch     = ($sourceHash -eq $targetHash)
+    $sourceHealthy = Test-SourceNodeModulesHealthy $script:MainRepo
+
+    $destState = if (-not (Test-Path -LiteralPath $destStore)) { 'absent' }
+                 elseif (Test-IsJunction $destStore)           { 'junction' }
+                 else                                          { 'realdir' }
+
+    $junctionTargetOk = $false
+    if ($destState -eq 'junction') {
+        $junctionTargetOk = ((Get-JunctionTarget $destStore) -eq $sourceStore)
     }
 
-    if (-not (Test-SourceNodeModulesHealthy $script:MainRepo)) {
-        Write-Host "Main checkout's frontend/node_modules doesn't look healthy (no .package-lock.json) -- skipping fast copy. Run npm ci in $WorktreePath\frontend yourself." -ForegroundColor Yellow
-        exit 0
+    $mode = Get-ProvisioningMode -DestState $destState -LockMatch $lockMatch `
+                -SourceHealthy $sourceHealthy -JunctionTargetOk $junctionTargetOk
+
+    # -Reclaim is the ONLY way the deliberate 'realdir + match -> noop' becomes a conversion.
+    # Swapping a private store for a shared one changes isolation guarantees; never implicit.
+    if ($Reclaim -and $destState -eq 'realdir' -and $lockMatch -and $sourceHealthy) {
+        $mode = 'reclaim'
     }
 
-    Write-Host "Copying frontend/node_modules from the main checkout (committed lockfile blobs match, source looks healthy) ..." -ForegroundColor Cyan
-    $sourcePath = "$script:MainRepo\frontend\node_modules"
-    $destPath = "$WorktreePath\frontend\node_modules"
-    # /MT:16 multi-threads the copy -- node_modules is many thousands of small files, and
-    # robocopy's default single-threaded mode is dramatically slower for that shape than for
-    # a few large files. /R:2 /W:1 caps retries so a transiently locked file (antivirus, a
-    # stray process) doesn't hang the whole copy.
-    robocopy $sourcePath $destPath /E /MT:16 /NFL /NDL /NJH /NJS /R:2 /W:1 | Out-Null
-    $robocopyExitCode = $LASTEXITCODE
-    # robocopy's own exit codes are a bitmask where 0-7 are all success (e.g. 1 = "files
-    # copied OK") and only 8+ signals a real error -- but those non-zero "success" codes leak
-    # out as this script's own process exit code otherwise, which makes any ordinary caller
-    # (anything checking "exit code != 0 = failure") wrongly conclude the copy failed even
-    # though it worked. Normalize explicitly so this script always exits 0 on success.
-    if ($robocopyExitCode -ge 8) {
-        Write-Host "robocopy reported errors (exit $robocopyExitCode) -- copy may be incomplete. Run npm ci in $WorktreePath\frontend to be safe." -ForegroundColor Red
-        exit 1
+    switch ($mode) {
+        'noop' {
+            Write-Host "Frontend deps already provisioned ($destState) -- nothing to do." -ForegroundColor Green
+            exit 0
+        }
+        'link' {
+            Write-Host 'Linking frontend/node_modules to the main checkout (committed lockfile blobs match, source looks healthy) ...' -ForegroundColor Cyan
+            New-JunctionLink -Path $destStore -Target $sourceStore
+            Write-Host "Frontend deps linked -> $sourceStore" -ForegroundColor Green
+            exit 0
+        }
+        'relink' {
+            Write-Host 'Existing junction points somewhere unexpected -- re-pointing at the main checkout ...' -ForegroundColor Yellow
+            Remove-JunctionLink -Path $destStore
+            New-JunctionLink -Path $destStore -Target $sourceStore
+            Write-Host "Frontend deps re-linked -> $sourceStore" -ForegroundColor Green
+            exit 0
+        }
+        'swap' {
+            # Unlink FIRST. Running npm ci through a live junction writes into the shared store.
+            Write-Host 'Dependency set no longer matches the shared store -- unlinking, then installing privately ...' -ForegroundColor Yellow
+            Remove-JunctionLink -Path $destStore
+            exit (Invoke-NpmCi $WorktreePath)
+        }
+        'install' {
+            exit (Invoke-NpmCi $WorktreePath)
+        }
+        'reclaim' {
+            # Real directory here, NOT a junction -- so this is the one deletion that must recurse.
+            Write-Host "Reclaiming: deleting this worktree's private node_modules, then linking to the main checkout. Removing ~128k files takes a while." -ForegroundColor Cyan
+            Remove-Item -LiteralPath $destStore -Recurse -Force -ErrorAction Stop
+            New-JunctionLink -Path $destStore -Target $sourceStore
+            Write-Host "Reclaimed -- frontend deps now linked -> $sourceStore" -ForegroundColor Green
+            exit 0
+        }
+        default {
+            Write-Host "Internal error: unhandled provisioning mode '$mode'." -ForegroundColor Red
+            exit 1
+        }
     }
-    Write-Host "Frontend deps copied." -ForegroundColor Green
-    exit 0
 }
 
-if (-not $NoRun) { Invoke-SamuraiSyncFrontendDeps -WorktreePath $WorktreePath }
+if (-not $NoRun) { Invoke-SamuraiSyncFrontendDeps -WorktreePath $WorktreePath -Reclaim:$Reclaim }
