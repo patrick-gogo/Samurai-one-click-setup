@@ -45,9 +45,16 @@ function Invoke-SamuraiCleanupTicket {
     if (-not $worktreePath) {
         Write-Host "No worktree found matching wt-$Key-* under $script:WorktreesRoot." -ForegroundColor Yellow
     } else {
-        $unlinked = Remove-WorktreeNodeModulesJunction $worktreePath
-        if ($unlinked) {
-            Write-Host 'Unlinked frontend/node_modules junction (shared store untouched).' -ForegroundColor Cyan
+        # A throwing unlink (e.g. a handle held open in the worktree) must not abort the run --
+        # the test-DB drop below still needs to happen.
+        $unlinked = $false
+        try {
+            $unlinked = Remove-WorktreeNodeModulesJunction $worktreePath
+            if ($unlinked) {
+                Write-Host 'Unlinked frontend/node_modules junction (shared store untouched).' -ForegroundColor Cyan
+            }
+        } catch {
+            Write-Host "Failed to unlink frontend/node_modules junction: $($_.Exception.Message) -- continuing." -ForegroundColor Red
         }
         Write-Host "Removing worktree $worktreePath ..." -ForegroundColor Cyan
         git -C $script:MainRepo worktree remove $worktreePath

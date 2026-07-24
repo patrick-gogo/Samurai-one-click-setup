@@ -62,7 +62,13 @@ function Get-ProvisioningMode {
 
 function Invoke-NpmCi([string]$WorktreePath) {
     Write-Host "Running npm ci in $WorktreePath\frontend -- this worktree's dependency set differs from the main checkout, so it needs its own store. Expect several minutes." -ForegroundColor Cyan
-    Push-Location "$WorktreePath\frontend"
+    # Structural guard, not per-caller: npm must never write through the shared-store junction.
+    $nm = "$WorktreePath\frontend\node_modules"
+    if (Test-IsJunction $nm) {
+        Write-Host 'Unlinking the shared-store junction before npm ci (npm must never write through it).' -ForegroundColor Yellow
+        Remove-JunctionLink -Path $nm
+    }
+    Push-Location "$WorktreePath\frontend" -ErrorAction Stop
     # npm ci's stdout (progress, deprecation notices, postinstall output) must never join this
     # function's own output stream -- an unredirected native command's stdout would land in the
     # array that `exit (Invoke-NpmCi ...)` receives, and `exit` given an array always yields 0.
@@ -94,6 +100,14 @@ function Invoke-SamuraiSyncFrontendDeps {
     $sourceStore = "$script:MainRepo\frontend\node_modules".TrimEnd('\')
     $destStore   = "$WorktreePath\frontend\node_modules"
 
+    # WorktreePath is hand-typed and a prefix of every worktree path under the same Desktop
+    # folder -- tab completion can offer the main checkout itself. -Reclaim there would recurse
+    # -delete the one shared store every worktree junctions into.
+    if ([System.IO.Path]::GetFullPath($destStore).TrimEnd('\') -eq [System.IO.Path]::GetFullPath($sourceStore)) {
+        Write-Host "WorktreePath resolves to the main checkout -- refusing to operate on the shared store itself." -ForegroundColor Red
+        exit 1
+    }
+
     $sourceHash = Get-CommittedBlobHash $script:MainRepo 'frontend/package-lock.json'
     $targetHash = Get-CommittedBlobHash $WorktreePath 'frontend/package-lock.json'
     if (-not $sourceHash -or -not $targetHash) {
@@ -104,9 +118,12 @@ function Invoke-SamuraiSyncFrontendDeps {
     $lockMatch     = ($sourceHash -eq $targetHash)
     $sourceHealthy = Test-SourceNodeModulesHealthy $script:MainRepo
 
-    $destState = if (-not (Test-Path -LiteralPath $destStore)) { 'absent' }
-                 elseif (Test-IsJunction $destStore)           { 'junction' }
-                 else                                          { 'realdir' }
+    # Any reparse point (junction, symlink, ...) counts as a link, never 'realdir' --
+    # 'realdir' is the only state -Reclaim is allowed to recurse-delete.
+    $destItem  = if (Test-Path -LiteralPath $destStore) { Get-Item -LiteralPath $destStore -Force -ErrorAction SilentlyContinue } else { $null }
+    $destState = if (-not $destItem)      { 'absent' }
+                 elseif ($destItem.LinkType) { 'junction' }
+                 else                     { 'realdir' }
 
     $junctionTargetOk = $false
     if ($destState -eq 'junction') {

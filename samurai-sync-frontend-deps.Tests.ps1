@@ -54,6 +54,22 @@ Assert 'unknown DestState throws' {
     catch { $true }
 }
 
+# --- Invoke-NpmCi: stream contract regression ---
+# Once shipped as `exit (Invoke-NpmCi ...)` receiving an array (native stdout joined the
+# function's output stream), so a failed install silently exited 0. Pins it as a scalar.
+$sandboxWt = Join-Path $env:TEMP "sync-frontend-deps-tests-$PID"
+if (Test-Path $sandboxWt) { Remove-Item -LiteralPath $sandboxWt -Recurse -Force }
+New-Item -ItemType Directory (Join-Path $sandboxWt 'frontend') -Force | Out-Null
+try {
+    Assert 'npm-ci: returns a scalar 1 on failure, not an array' {
+        # Defined inside this scriptblock so the shadow is local to this one Assert call.
+        function npm { Write-Output 'noise'; Write-Output 'more noise'; cmd /c exit 3 }
+        $r = @(Invoke-NpmCi $sandboxWt); $r.Count -eq 1 -and $r[0] -eq 1
+    }
+} finally {
+    Remove-Item -LiteralPath $sandboxWt -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 Write-Host ''
 if ($script:ran -eq 0) { Write-Host 'NO TESTS RAN' -ForegroundColor Red; exit 1 }
 if ($script:fails) { Write-Host "$($script:fails)/$($script:ran) FAILED" -ForegroundColor Red; exit 1 } else { Write-Host "ALL $($script:ran) PASS" -ForegroundColor Green }
