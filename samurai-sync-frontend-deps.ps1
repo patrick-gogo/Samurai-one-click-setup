@@ -87,7 +87,7 @@ function Invoke-SamuraiSyncFrontendDeps {
     param([string]$WorktreePath, [switch]$Reclaim)
 
     # Every terminal path sets an explicit exit code: 0 = provisioned OR a safe intentional
-    # skip, 1 = a real error. /start-ticket step 7b reads this.
+    # skip, 1 = a real error -- so any future caller can branch on it (no consumer does yet).
     if (-not $WorktreePath) {
         Write-Host 'WorktreePath is required.' -ForegroundColor Red
         exit 1
