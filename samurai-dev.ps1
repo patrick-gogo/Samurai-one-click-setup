@@ -1,5 +1,5 @@
 # samurai-dev.ps1 — open the full Samurai Cart dev environment in one Windows Terminal window.
-# Tabs: Servers (venv + api logs | admin FE + storefront), + a Claude session per repo.
+# Tabs: Servers only (venv + api logs | admin FE + storefront). Claude Code runs in Warp, not here.
 # The greeting prints in THIS launcher window (samurai-greeting.ps1). ASCII-only output so it
 # renders the same under Windows PowerShell 5.1 and pwsh 7 (no-BOM non-ASCII mojibakes on 5.1).
 
@@ -101,6 +101,27 @@ Pop-Location
 Write-StepStart 'docker'
 Write-StepEnd "up ($containers containers)"
 
+# Migration drift check. alembic_version is global to the one shared dev DB but migration FILES
+# are per-branch, so migrating on a feature branch and then switching away leaves a stamp that
+# no alembic command can resolve — and nothing else here goes red, because the API healthcheck
+# never touches the DB. Best-effort: a failure must never block the startup ritual.
+Write-StepStart 'migrations'
+try {
+    . "$PSScriptRoot\samurai-migration-lib.ps1"
+    $mig = Get-MigrationHealth $admin
+    switch ($mig.State) {
+        'ok'     { Write-StepEnd 'at head' }
+        'behind' { Write-StepEnd 'BEHIND' 'Yellow';  Write-Note $mig.Detail }
+        'wedged' {
+            Write-StepEnd 'WEDGED' 'Red'
+            Write-Note $mig.Detail
+            Write-Note 'alembic cannot run at all - current/stamp/upgrade all fail.'
+            Write-Note 'Fix: set alembic_version to the shared ancestor, then upgrade head.'
+        }
+        default  { Write-StepEnd 'unknown' 'DarkGray' }
+    }
+} catch { Write-StepEnd 'check failed' 'DarkGray' }
+
 # Open each repo in its own VS Code window (soft-skip if 'code' isn't found).
 Write-StepStart 'vs code'
 $codeOk = $true
@@ -123,11 +144,7 @@ $wtArgs = @(
     ';', 'split-pane', '-V', '--suppressApplicationTitle', '-d', "$admin\frontend", 'pwsh', '-NoExit', '-Command', 'npm run dev',
     ';', 'split-pane', '-H', '--suppressApplicationTitle', '-d', $store,            'pwsh', '-NoExit', '-Command', 'npm run dev -- --port 3001',
     ';', 'move-focus', 'left',
-    ';', 'split-pane', '-H', '--suppressApplicationTitle', '-d', $admin, 'pwsh', '-NoExit', '-Command', 'docker compose logs -f --tail=100 api',
-    ';', 'new-tab', '--title', 'Dashboard', '--suppressApplicationTitle', '-d', 'C:\Users\John Patrick Mandal\Desktop\samurai-patrick-command-center', 'pwsh', '-NoExit', '-Command', 'Start-Job { Start-Sleep -Seconds 8; Start-Process http://localhost:3002 } | Out-Null; npm run dev',
-    ';', 'new-tab', '--title', 'Claude - Admin',      '--suppressApplicationTitle', '-d', $admin,           'pwsh', '-NoExit', '-Command', 'claude',
-    ';', 'new-tab', '--title', 'Claude - Storefront', '--suppressApplicationTitle', '-d', $store,           'pwsh', '-NoExit', '-Command', 'claude',
-    ';', 'focus-tab', '-t', '0'   # land on the Servers tab
+    ';', 'split-pane', '-H', '--suppressApplicationTitle', '-d', $admin, 'pwsh', '-NoExit', '-Command', 'docker compose logs -f --tail=100 api'
 )
 wt @wtArgs
 Write-StepEnd 'ready'

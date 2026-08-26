@@ -64,9 +64,27 @@ function Invoke-SamuraiTest {
     $testDbUrl = "postgresql+asyncpg://samurai:samurai_dev_password@db:5432/$dbName"
     Write-Host "Running tests for $ticketKey against $dbName ..." -ForegroundColor Cyan
 
+    # `docker run` starts a fresh container, so it inherits none of the api
+    # service's environment. Pull the resolved values instead of hardcoding
+    # them, so a real key set later still matches what the app encrypts with.
+    $apiEnv = $null
+    try {
+        $apiEnv = (docker compose --project-directory $repoRoot config --format json |
+            ConvertFrom-Json).services.api.environment
+    } catch {
+        Write-Host "Could not read the api service environment; encrypted-config tests may fail." -ForegroundColor Yellow
+    }
+
+    $envArgs = @()
+    foreach ($name in @('ENCRYPTION_KEY', 'SECRET_KEY')) {
+        $value = $apiEnv.$name
+        if ($value) { $envArgs += @('-e', "$name=$value") }
+    }
+
     docker run --rm --network samurai_cart_network `
         -v "${repoRoot}\backend:/app" `
         -e "TEST_DATABASE_URL=$testDbUrl" `
+        @envArgs `
         -w /app `
         samurai_cart_v3-api:latest `
         pytest @PytestArgs
