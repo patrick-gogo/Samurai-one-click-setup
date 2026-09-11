@@ -19,7 +19,7 @@ param(
 
 . "$PSScriptRoot\samurai-junction-lib.ps1"
 
-$script:MainRepo = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
+$script:MainRepo = 'C:\Users\john\Desktop\samurai_cart_v3'
 
 function Get-CommittedBlobHash([string]$RepoPath, [string]$RelativePath) {
     $hash = git -C $RepoPath rev-parse "HEAD:$RelativePath" 2>$null

@@ -63,14 +63,20 @@ function Write-Card([string]$Title, [string[]]$Lines) {
 & "$PSScriptRoot\samurai-greeting.ps1"
 # -------------------------------------------------------------------------------------------
 
-$admin = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
-$store = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3_frontend'
+$admin = 'C:\Users\john\Desktop\samurai_cart_v3'
+$store = 'C:\Users\john\Desktop\samurai_cart_v3_frontend'
 
 # Make sure the Docker engine is up — launch Docker Desktop and wait (with a spinner) if it's closed.
 docker info *> $null
 if ($LASTEXITCODE -ne 0) {
     Write-Note 'Docker is not running — starting Docker Desktop (this can take a minute)...'
-    Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+    # Docker Desktop installs to either the per-user or the machine-wide location; take whichever exists.
+    $dockerExe = @(
+        "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe",
+        'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $dockerExe) { Write-Note 'Docker Desktop.exe not found in either install location - start Docker manually.'; return }
+    Start-Process $dockerExe
     $deadline = (Get-Date).AddMinutes(3)
     $spin = '|', '/', '-', '\'; $si = 0
     do {

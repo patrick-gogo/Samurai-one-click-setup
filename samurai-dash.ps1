@@ -4,8 +4,8 @@ param([switch]$NoRun)
 
 . "$PSScriptRoot\samurai-migration-lib.ps1"
 
-$script:Admin = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
-$script:Store = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3_frontend'
+$script:Admin = 'C:\Users\john\Desktop\samurai_cart_v3'
+$script:Store = 'C:\Users\john\Desktop\samurai_cart_v3_frontend'
 $script:W = 60          # box width
 $script:Inner = $script:W - 4
 

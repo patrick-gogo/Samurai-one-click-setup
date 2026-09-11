@@ -2,7 +2,7 @@
 # background at Windows startup. Rebuilds from the current source on every run so
 # it always serves whatever is on `main`, then serves the fresh build.
 
-$ProjectDir = "C:\Users\John Patrick Mandal\Desktop\samurai-patrick-command-center"
+$ProjectDir = "C:\Users\john\Desktop\samurai-patrick-command-center"
 
 Set-Location $ProjectDir
 npm run build

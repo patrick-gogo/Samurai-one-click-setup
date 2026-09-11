@@ -13,8 +13,8 @@ param(
 . "$PSScriptRoot\samurai-testdb-lib.ps1"
 . "$PSScriptRoot\samurai-junction-lib.ps1"
 
-$script:WorktreesRoot = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3 worktrees'
-$script:MainRepo = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
+$script:WorktreesRoot = 'C:\Users\john\Desktop\samurai_cart_v3 worktrees'
+$script:MainRepo = 'C:\Users\john\Desktop\samurai_cart_v3'
 
 function Find-TicketWorktree([string]$Key, [string]$BaseDir) {
     $found = @(Get-ChildItem -Path $BaseDir -Directory -Filter "wt-$Key-*" -ErrorAction SilentlyContinue)
