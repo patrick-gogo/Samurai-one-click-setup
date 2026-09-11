@@ -2,22 +2,35 @@
 # in one step. Manual/opt-in — run whenever you've decided a ticket is really done (typically
 # after /wrap-ticket has already flipped the vault status; /wrap-ticket itself never touches
 # branches or worktrees). Dot-source with -NoRun for tests.
+# NOTE: Key is deliberately NOT [Parameter(Mandatory)] -- mandatory binding fires on dot-source,
+# so `. this.ps1 -NoRun` would prompt for it and hang a non-interactive test run. Validated
+# inside Invoke-SamuraiCleanupTicket instead.
 param(
-    [Parameter(Mandatory = $true)]
     [string]$Key,
     [switch]$NoRun
 )
 
 . "$PSScriptRoot\samurai-testdb-lib.ps1"
+. "$PSScriptRoot\samurai-junction-lib.ps1"
 
-$script:Desktop = 'C:\Users\John Patrick Mandal\Desktop'
-$script:MainRepo = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
+$script:WorktreesRoot = 'C:\Users\john\Desktop\samurai_cart_v3 worktrees'
+$script:MainRepo = 'C:\Users\john\Desktop\samurai_cart_v3'
 
 function Find-TicketWorktree([string]$Key, [string]$BaseDir) {
     $found = @(Get-ChildItem -Path $BaseDir -Directory -Filter "wt-$Key-*" -ErrorAction SilentlyContinue)
     if ($found.Count -eq 0) { return $null }
     if ($found.Count -gt 1) { throw "Multiple worktrees match wt-$Key-*: $($found.FullName -join ', ')" }
     return $found[0].FullName
+}
+
+# Unlink before `git worktree remove`. Removing a worktree with a live junction leaves a
+# dangling junction shell behind and an orphan directory to chase; unlinking first lets git
+# complete cleanly. Only ever removes junctions -- a real private node_modules is left alone.
+function Remove-WorktreeNodeModulesJunction([string]$WorktreePath) {
+    $nm = Join-Path $WorktreePath 'frontend\node_modules'
+    if (-not (Test-IsJunction $nm)) { return $false }
+    Remove-JunctionLink -Path $nm
+    return $true
 }
 
 function Invoke-SamuraiCleanupTicket {
@@ -28,14 +41,27 @@ function Invoke-SamuraiCleanupTicket {
         return
     }
 
-    $worktreePath = Find-TicketWorktree -Key $Key -BaseDir $script:Desktop
+    $worktreePath = Find-TicketWorktree -Key $Key -BaseDir $script:WorktreesRoot
     if (-not $worktreePath) {
-        Write-Host "No worktree found matching wt-$Key-* under $script:Desktop." -ForegroundColor Yellow
+        Write-Host "No worktree found matching wt-$Key-* under $script:WorktreesRoot." -ForegroundColor Yellow
     } else {
+        # A throwing unlink (e.g. a handle held open in the worktree) must not abort the run --
+        # the test-DB drop below still needs to happen.
+        $unlinked = $false
+        try {
+            $unlinked = Remove-WorktreeNodeModulesJunction $worktreePath
+            if ($unlinked) {
+                Write-Host 'Unlinked frontend/node_modules junction (shared store untouched).' -ForegroundColor Cyan
+            }
+        } catch {
+            Write-Host "Failed to unlink frontend/node_modules junction: $($_.Exception.Message) -- continuing." -ForegroundColor Red
+        }
         Write-Host "Removing worktree $worktreePath ..." -ForegroundColor Cyan
         git -C $script:MainRepo worktree remove $worktreePath
         if ($LASTEXITCODE -ne 0) {
-            Write-Host 'git worktree remove failed -- worktree left in place. Resolve manually (e.g. commit/stash changes) and re-run.' -ForegroundColor Red
+            # Unlinking happens first, so a failure here leaves the worktree without node_modules.
+            $note = if ($unlinked) { ' Its frontend/node_modules junction is already unlinked -- re-run samurai-sync-frontend-deps.ps1 if you keep working in it.' } else { '' }
+            Write-Host "git worktree remove failed -- worktree left in place. Resolve manually (e.g. commit/stash changes) and re-run.$note" -ForegroundColor Red
             return
         }
         Write-Host 'Worktree removed.' -ForegroundColor Green
@@ -47,4 +73,7 @@ function Invoke-SamuraiCleanupTicket {
     Write-Host 'Done.' -ForegroundColor Green
 }
 
-if (-not $NoRun) { Invoke-SamuraiCleanupTicket -Key $Key }
+if (-not $NoRun) {
+    if (-not $Key) { Write-Host 'Key is required (e.g. -Key V3-1193).' -ForegroundColor Red; exit 1 }
+    Invoke-SamuraiCleanupTicket -Key $Key
+}

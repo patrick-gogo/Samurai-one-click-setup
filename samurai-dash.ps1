@@ -2,8 +2,10 @@
 # Boxed panels + command bar of actions. ASCII-only output. Dot-source with -NoRun for tests.
 param([switch]$NoRun)
 
-$script:Admin = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
-$script:Store = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3_frontend'
+. "$PSScriptRoot\samurai-migration-lib.ps1"
+
+$script:Admin = 'C:\Users\john\Desktop\samurai_cart_v3'
+$script:Store = 'C:\Users\john\Desktop\samurai_cart_v3_frontend'
 $script:W = 60          # box width
 $script:Inner = $script:W - 4
 
@@ -130,9 +132,13 @@ function Invoke-Dashboard {
         $repos  = @((Get-RepoInfo 'admin' $script:Admin), (Get-RepoInfo 'store' $script:Store))
         $dock   = $null; try { $dock = Get-DockerInfo } catch {}
         $health = Get-ServiceHealth
+        # The API healthcheck hits /docs, which never touches the DB — so a stale or wedged
+        # alembic stamp stays invisible there. This is the row that goes red for it.
+        $mig    = $null; try { $mig = Get-MigrationHealth $script:Admin } catch {}
         $dockDown   = if ($null -eq $dock) { 1 } else { @($dock | Where-Object { $_.State -ne 'running' }).Count }
         $healthDown = @($health | Where-Object { -not $_.Up }).Count
-        $issues     = $dockDown + $healthDown
+        $migDown    = if ($mig -and $mig.State -in @('wedged', 'behind')) { 1 } else { 0 }
+        $issues     = $dockDown + $healthDown + $migDown
 
         Clear-Host
         Write-Host ''
@@ -184,7 +190,21 @@ function Invoke-Dashboard {
             $g = Get-StatusGlyph $(if ($s.Up) { 'ok' } else { 'down' })
             Write-PanelRow @(@{ Text = ($g.Glyph + ' '); Color = $g.Color }, @{ Text = (Format-HealthLine $s); Color = 'Gray' }) $script:Inner
         }
+        $migState = if ($mig) { $mig.State } else { 'unknown' }
+        $migGlyph = switch ($migState) {
+            'ok'      { [pscustomobject]@{ Glyph = 'ok'; Color = 'Green' } }
+            'behind'  { [pscustomobject]@{ Glyph = '!!'; Color = 'Yellow' } }
+            'wedged'  { [pscustomobject]@{ Glyph = 'XX'; Color = 'Red' } }
+            default   { [pscustomobject]@{ Glyph = '??'; Color = 'DarkGray' } }
+        }
+        Write-PanelRow @(
+            @{ Text = ($migGlyph.Glyph + ' '); Color = $migGlyph.Color },
+            @{ Text = ('{0,-10} :{1}' -f 'migrations', $migState); Color = 'Gray' }
+        ) $script:Inner
         Write-PanelBottom
+        if ($migState -eq 'wedged') {
+            Write-Host '  alembic is WEDGED - see: samurai-migration-lib.ps1 header for the fix' -ForegroundColor Red
+        }
 
         Write-Host ''
         Write-Host '  [r]efresh  [o]pen-PR  [d]ocker  [a]claude  [g]ithub  [c]ode  [j]ira  [l]ocalhost  [w]gogo  [q]uit' -ForegroundColor DarkGray

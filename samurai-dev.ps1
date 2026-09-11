@@ -1,5 +1,5 @@
 # samurai-dev.ps1 — open the full Samurai Cart dev environment in one Windows Terminal window.
-# Tabs: Servers (venv + api logs | admin FE + storefront), + a Claude session per repo.
+# Tabs: Servers only (venv + api logs | admin FE + storefront). Claude Code runs in Warp, not here.
 # The greeting prints in THIS launcher window (samurai-greeting.ps1). ASCII-only output so it
 # renders the same under Windows PowerShell 5.1 and pwsh 7 (no-BOM non-ASCII mojibakes on 5.1).
 
@@ -63,14 +63,20 @@ function Write-Card([string]$Title, [string[]]$Lines) {
 & "$PSScriptRoot\samurai-greeting.ps1"
 # -------------------------------------------------------------------------------------------
 
-$admin = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3'
-$store = 'C:\Users\John Patrick Mandal\Desktop\samurai_cart_v3_frontend'
+$admin = 'C:\Users\john\Desktop\samurai_cart_v3'
+$store = 'C:\Users\john\Desktop\samurai_cart_v3_frontend'
 
 # Make sure the Docker engine is up — launch Docker Desktop and wait (with a spinner) if it's closed.
 docker info *> $null
 if ($LASTEXITCODE -ne 0) {
     Write-Note 'Docker is not running — starting Docker Desktop (this can take a minute)...'
-    Start-Process 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+    # Docker Desktop installs to either the per-user or the machine-wide location; take whichever exists.
+    $dockerExe = @(
+        "$env:LOCALAPPDATA\Programs\DockerDesktop\Docker Desktop.exe",
+        'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+    ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $dockerExe) { Write-Note 'Docker Desktop.exe not found in either install location - start Docker manually.'; return }
+    Start-Process $dockerExe
     $deadline = (Get-Date).AddMinutes(3)
     $spin = '|', '/', '-', '\'; $si = 0
     do {
@@ -101,6 +107,27 @@ Pop-Location
 Write-StepStart 'docker'
 Write-StepEnd "up ($containers containers)"
 
+# Migration drift check. alembic_version is global to the one shared dev DB but migration FILES
+# are per-branch, so migrating on a feature branch and then switching away leaves a stamp that
+# no alembic command can resolve — and nothing else here goes red, because the API healthcheck
+# never touches the DB. Best-effort: a failure must never block the startup ritual.
+Write-StepStart 'migrations'
+try {
+    . "$PSScriptRoot\samurai-migration-lib.ps1"
+    $mig = Get-MigrationHealth $admin
+    switch ($mig.State) {
+        'ok'     { Write-StepEnd 'at head' }
+        'behind' { Write-StepEnd 'BEHIND' 'Yellow';  Write-Note $mig.Detail }
+        'wedged' {
+            Write-StepEnd 'WEDGED' 'Red'
+            Write-Note $mig.Detail
+            Write-Note 'alembic cannot run at all - current/stamp/upgrade all fail.'
+            Write-Note 'Fix: set alembic_version to the shared ancestor, then upgrade head.'
+        }
+        default  { Write-StepEnd 'unknown' 'DarkGray' }
+    }
+} catch { Write-StepEnd 'check failed' 'DarkGray' }
+
 # Open each repo in its own VS Code window (soft-skip if 'code' isn't found).
 Write-StepStart 'vs code'
 $codeOk = $true
@@ -123,11 +150,7 @@ $wtArgs = @(
     ';', 'split-pane', '-V', '--suppressApplicationTitle', '-d', "$admin\frontend", 'pwsh', '-NoExit', '-Command', 'npm run dev',
     ';', 'split-pane', '-H', '--suppressApplicationTitle', '-d', $store,            'pwsh', '-NoExit', '-Command', 'npm run dev -- --port 3001',
     ';', 'move-focus', 'left',
-    ';', 'split-pane', '-H', '--suppressApplicationTitle', '-d', $admin, 'pwsh', '-NoExit', '-Command', 'docker compose logs -f --tail=100 api',
-    ';', 'new-tab', '--title', 'Dashboard', '--suppressApplicationTitle', '-d', 'C:\Users\John Patrick Mandal\Desktop\samurai-patrick-command-center', 'pwsh', '-NoExit', '-Command', 'Start-Job { Start-Sleep -Seconds 8; Start-Process http://localhost:3002 } | Out-Null; npm run dev',
-    ';', 'new-tab', '--title', 'Claude - Admin',      '--suppressApplicationTitle', '-d', $admin,           'pwsh', '-NoExit', '-Command', 'claude',
-    ';', 'new-tab', '--title', 'Claude - Storefront', '--suppressApplicationTitle', '-d', $store,           'pwsh', '-NoExit', '-Command', 'claude',
-    ';', 'focus-tab', '-t', '0'   # land on the Servers tab
+    ';', 'split-pane', '-H', '--suppressApplicationTitle', '-d', $admin, 'pwsh', '-NoExit', '-Command', 'docker compose logs -f --tail=100 api'
 )
 wt @wtArgs
 Write-StepEnd 'ready'
