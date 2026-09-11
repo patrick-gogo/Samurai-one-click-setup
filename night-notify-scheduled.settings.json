@@ -1,0 +1,21 @@
+{
+  "$comment": "Permission scope for the tiny end-of-run notification pass in samurai-night-shift.ps1. Its only job is to read one message file the wrapper already wrote and post its exact contents to Chatwork room 442797406 (the user's own private 'Draft Outbox' room) via Composio, the same connection the Jira read uses since there is no Chatwork API token on this machine. Never room 404861709, the shared V3 team room open-pr.md forbids auto-posting to. No Write, no Edit, no Bash, no Task, no Notion, and no additionalDirectories: this pass has no reason to touch the repo, the vault, or any other tool, so none of them are allowed.",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read",
+      "mcp__composio__COMPOSIO_SEARCH_TOOLS",
+      "mcp__composio__COMPOSIO_GET_TOOL_SCHEMAS",
+      "mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL"
+    ],
+    "deny": [
+      "Write",
+      "Edit",
+      "NotebookEdit",
+      "Bash",
+      "Task",
+      "WebFetch"
+    ]
+  },
+  "enabledMcpjsonServers": []
+}
