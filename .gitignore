@@ -2,3 +2,6 @@
 
 # build/run output
 *.log
+
+# nightly run output (logs + history files)
+logs/
