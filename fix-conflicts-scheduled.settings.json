@@ -1,0 +1,92 @@
+{
+  "$comment": "Permission scope for the UNATTENDED /fix-conflicts run only (samurai-fix-conflicts.ps1 + the 'Samurai Fix Conflicts' scheduled task). Loaded with --settings so interactive sessions are unaffected. Deliberately NOT bypassPermissions. Three things make this profile different from the other night profiles, each deliberate. (1) git commit IS allowed, because resolving a conflict means committing the merge; fix-conflicts.md:35 says resolving is local and reversible so it needs no gate. (2) git push is DENIED, because that same rule says the push IS the gate and that auto-approve does not satisfy it. The prompt passes --no-push as well; this deny is the backstop, so a misread instruction cannot become a push that happened. (3) Edit is denied inside the MAIN CHECKOUT so the user's working tree cannot be touched, while the worktrees folder beside it stays writable. The trailing backslash in the deny is load-bearing: 'samurai_cart_v3\\**' does not match 'samurai_cart_v3 worktrees' because of the space. git checkout and git switch are denied outright because the command never needs them (it uses worktree add and merge) and either one could change the branch under another agent sharing the main checkout. npm/npx/uv/python are allowed because a conflicted lockfile is resolved by taking master's copy and regenerating it, never by hand-merging.",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": [
+      "C:\\Users\\john\\Documents\\Patrick Obsidian\\Patrick",
+      "C:\\Users\\john\\Desktop\\samurai_cart_v3 worktrees"
+    ],
+    "allow": [
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "ToolSearch",
+      "Bash(date:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(sort:*)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(python:*)",
+      "Bash(uv:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(git -C:*)",
+      "Bash(git fetch:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git branch:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git rev-list:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git merge-tree:*)",
+      "Bash(git merge:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git worktree:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr diff:*)",
+      "Bash(gh search:*)",
+      "mcp__notion__notion-fetch",
+      "mcp__notion__notion-update-page",
+      "mcp__notion__notion-create-pages"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git rebase:*)",
+      "Bash(git reset:*)",
+      "Bash(git stash:*)",
+      "Bash(git clean:*)",
+      "Bash(git restore:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr edit:*)",
+      "Bash(gh pr comment:*)",
+      "Bash(gh pr review:*)",
+      "Bash(gh pr close:*)",
+      "Bash(gh pr ready:*)",
+      "Bash(gh api:*)",
+      "Bash(gh issue:*)",
+      "Edit(C:\\Users\\john\\Desktop\\samurai_cart_v3\\**)",
+      "Edit(C:/Users/john/Desktop/samurai_cart_v3/**)",
+      "Bash(rm:*)",
+      "Bash(mv:*)",
+      "NotebookEdit"
+    ]
+  },
+  "$hooksComment": "The deny list above cannot actually stop a push. Permission patterns match a command PREFIX, so 'Bash(git push:*)' catches 'git push ...' but not 'git -C \"<worktree>\" push ...', which matches the 'Bash(git -C:*)' ALLOW instead. A probe on 2026-09-11 confirmed that exact command ran unblocked. /fix-conflicts works inside worktrees, so that is the spelling it would use. The hook below sees the whole command string and catches every form. The deny rules are kept as a second layer for the plain spelling, since the hook fails open by design.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\john\\.claude\\hooks\\no-push-guard.js\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "enabledMcpjsonServers": []
+}
