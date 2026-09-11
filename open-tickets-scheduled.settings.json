@@ -1,0 +1,63 @@
+{
+  "$comment": "Permission scope for the UNATTENDED /open-tickets run only (samurai-open-tickets.ps1 + the 'Samurai Open Tickets Census' scheduled task). Loaded with --settings so interactive sessions are unaffected. Deliberately NOT bypassPermissions: this list is everything the command needs and nothing else. Anything outside it is denied silently in -p mode, which shows up as a missing section in the report rather than an unwanted write.",
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": [
+      "C:\\Users\\john\\Documents\\Patrick Obsidian\\Patrick"
+    ],
+    "allow": [
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep",
+      "ToolSearch",
+      "Skill",
+      "Bash(date:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(wc:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(grep:*)",
+      "Bash(sort:*)",
+      "Bash(comm:*)",
+      "Bash(tr:*)",
+      "Bash(python:*)",
+      "Bash(git -C:*)",
+      "Bash(git fetch:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git branch:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(gh pr list:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh search:*)",
+      "mcp__composio__COMPOSIO_SEARCH_TOOLS",
+      "mcp__composio__COMPOSIO_GET_TOOL_SCHEMAS",
+      "mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL",
+      "mcp__composio__COMPOSIO_REMOTE_BASH_TOOL",
+      "mcp__notion__notion-fetch",
+      "mcp__notion__notion-update-page",
+      "mcp__notion__notion-create-pages",
+      "mcp__notion__notion-search"
+    ],
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(git switch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(git reset:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(gh pr edit:*)",
+      "Bash(gh pr comment:*)",
+      "Bash(gh pr review:*)",
+      "Bash(gh pr close:*)",
+      "Bash(gh api:*)"
+    ]
+  },
+  "enabledMcpjsonServers": []
+}
